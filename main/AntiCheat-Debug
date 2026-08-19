@@ -1,1 +1,29 @@
-for a,b in next,getgc()do if type(b)=="function"and islclosure(b)then local c=getconstants(b)if type(c)=="table"then for a,d in next,c do if d=="X-16"then local e;e=hookfunction(b,LPH_NO_VIRTUALIZE(function(...)local f=debug.getstack(1)for g,h in next,f do if h=="X-16"then debug.setstack(1,g,nil)end end;return e(...)end))break end end end;local i=getfenv(b).script;if i.Parent==nil and i:IsA("LocalScript")then print(b)task.spawn(function()hookfunction(b,coroutine.yield())end)end end end
+for _, Function in next, getgc() do
+    if type(Function) == "function" and islclosure(Function) then
+        local Constants = getconstants(Function)
+        if type(Constants) == "table" then
+            for _, Constant in next, Constants do
+                if Constant == "X-16" then
+                    local Original
+                    Original = hookfunction(Function, LPH_NO_VIRTUALIZE(function(...)
+                        local Stack = debug.getstack(1)
+                        for Index, Value in next, Stack do
+                            if Value == "X-16" then
+                                debug.setstack(1, Index, nil)
+                            end
+                        end
+                        return Original(...)
+                    end))
+                    break
+                end
+            end
+        end
+        local Script = getfenv(Function).script
+        if Script.Parent == nil and Script:IsA("LocalScript") then
+            print(Function)
+            task.spawn(function()
+                hookfunction(Function, coroutine.yield())
+            end)
+        end
+    end
+end
