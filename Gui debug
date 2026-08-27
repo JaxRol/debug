@@ -2496,32 +2496,16 @@ function Library:AddContextMenu(
         else
             MenuOffset = Offset
         end
-        local HolderPosition = Holder.AbsolutePosition
-        local Ancestor = Holder.Parent
-        while Ancestor and Ancestor ~= ParentGui do
-            if Ancestor:IsA("ScrollingFrame") then
-                HolderPosition -= Ancestor.CanvasPosition * Library.DPIScale
-            end
-            Ancestor = Ancestor.Parent
-        end
-        local X = math.floor(HolderPosition.X + MenuOffset[1])
-        local Y = math.floor(HolderPosition.Y + MenuOffset[2])
+        local X = math.floor(Holder.AbsolutePosition.X + MenuOffset[1])
+        local Y = math.floor(Holder.AbsolutePosition.Y + MenuOffset[2])
         local ViewportSize = ParentGui.AbsoluteSize
         if ViewportSize.X <= 0 or ViewportSize.Y <= 0 then
             local Camera = workspace.CurrentCamera
             ViewportSize = Camera and Camera.ViewportSize or ViewportSize
         end
         local Margin = 4
-        local MenuWidth = Menu.AbsoluteSize.X
-        local MenuHeight = Menu.AbsoluteSize.Y
-        local MaxX = math.max(Margin, ViewportSize.X - MenuWidth - Margin)
-        local MaxY = math.max(Margin, ViewportSize.Y - MenuHeight - Margin)
-        if Y + MenuHeight > ViewportSize.Y - Margin then
-            local AboveY = math.floor(HolderPosition.Y - MenuHeight - 1.5)
-            if AboveY >= Margin then
-                Y = AboveY
-            end
-        end
+        local MaxX = math.max(Margin, ViewportSize.X - Menu.AbsoluteSize.X - Margin)
+        local MaxY = math.max(Margin, ViewportSize.Y - Menu.AbsoluteSize.Y - Margin)
         Menu.Position = UDim2.fromOffset(
             math.clamp(X, Margin, MaxX),
             math.clamp(Y, Margin, MaxY)
@@ -2547,7 +2531,9 @@ function Library:AddContextMenu(
         local Ancestor = Holder.Parent
         while Ancestor and Ancestor ~= ParentGui do
             if Ancestor:IsA("ScrollingFrame") then
-                table.insert(Table.ScrollSignals, Ancestor:GetPropertyChangedSignal("CanvasPosition"):Connect(Table.UpdatePosition))
+                table.insert(Table.ScrollSignals, Ancestor:GetPropertyChangedSignal("CanvasPosition"):Connect(function()
+                    Table:Close()
+                end))
             end
             Ancestor = Ancestor.Parent
         end
