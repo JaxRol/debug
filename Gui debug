@@ -1,5 +1,3 @@
-
-
 local cloneref = (cloneref or clonereference or function(instance: any)
     return instance
 end)
@@ -5028,52 +5026,73 @@ do
             Slider.Suffix = Suffix
             Slider:Display()
         end
+        local SliderDragging = false
+        local SliderDragInput = nil
+
+        local function SetSliderScrollingEnabled(Enabled: boolean)
+            if Library.ActiveTab then
+                if Library.ActiveTab.Sides then
+                    for _, Side in Library.ActiveTab.Sides do
+                        Side.ScrollingEnabled = Enabled
+                    end
+                else
+                    Library.ActiveTab.Container.ScrollingEnabled = Enabled
+                end
+            end
+            if Library.ActiveLoading and Library.ActiveLoading.Sidebar then
+                Library.ActiveLoading.Sidebar.Container.ScrollingEnabled = Enabled
+            end
+        end
+
+        local function UpdateSliderFromX(X: number)
+            if Slider.Disabled or Bar.AbsoluteSize.X <= 0 then
+                return
+            end
+            local Scale = math.clamp((X - Bar.AbsolutePosition.X) / Bar.AbsoluteSize.X, 0, 1)
+            Slider:SetValue(Slider.Min + ((Slider.Max - Slider.Min) * Scale))
+        end
+
         Bar.InputBegan:Connect(function(Input: InputObject)
             if not IsClickInput(Input) or Slider.Disabled then
                 return
             end
-            if Library.ActiveTab then
-                if Library.ActiveTab.Sides then
-                    for _, Side in Library.ActiveTab.Sides do
-                        Side.ScrollingEnabled = false
-                    end
-                else
-                    Library.ActiveTab.Container.ScrollingEnabled = false
-                end
-            end
-            if Library.ActiveLoading and Library.ActiveLoading.Sidebar then
-                Library.ActiveLoading.Sidebar.Container.ScrollingEnabled = false
-            end
-            while IsDragInput(Input) do
-                local Location = Mouse.X
-                local Scale = math.clamp((Location - Bar.AbsolutePosition.X) / Bar.AbsoluteSize.X, 0, 1)
-                local OldValue = Slider.Value
-                Slider.Value = Round(
-					Slider.Min + ((Slider.Max - Slider.Min) * Scale),
-					Slider.Rounding,
-					Slider.Min,
-					Slider.Max
-				)
-                Slider:Display()
-                if Slider.Value ~= OldValue then
-                    Library:SafeCallback(Slider.Callback, Slider.Value)
-                    Library:SafeCallback(Slider.Changed, Slider.Value)
-                end
-                RunService.RenderStepped:Wait()
-            end
-            if Library.ActiveTab then
-                if Library.ActiveTab.Sides then
-                    for _, Side in Library.ActiveTab.Sides do
-                        Side.ScrollingEnabled = true
-                    end
-                else
-                    Library.ActiveTab.Container.ScrollingEnabled = true
-                end
-            end
-            if Library.ActiveLoading and Library.ActiveLoading.Sidebar then
-                Library.ActiveLoading.Sidebar.Container.ScrollingEnabled = true
-            end
+            SliderDragging = true
+            SliderDragInput = Input
+            SetSliderScrollingEnabled(false)
+            UpdateSliderFromX(Input.UserInputType == Enum.UserInputType.Touch and Input.Position.X or Mouse.X)
         end)
+
+        Library:GiveSignal(UserInputService.InputChanged:Connect(function(Input: InputObject)
+            if not SliderDragging or Slider.Disabled or not SliderDragInput then
+                return
+            end
+
+            if SliderDragInput.UserInputType == Enum.UserInputType.Touch then
+                if Input == SliderDragInput then
+                    UpdateSliderFromX(Input.Position.X)
+                end
+            elseif Input.UserInputType == Enum.UserInputType.MouseMovement then
+                UpdateSliderFromX(Input.Position.X)
+            end
+        end))
+
+        Library:GiveSignal(UserInputService.InputEnded:Connect(function(Input: InputObject)
+            if not SliderDragging or not SliderDragInput then
+                return
+            end
+
+            local Ended = Input == SliderDragInput
+                or (SliderDragInput.UserInputType == Enum.UserInputType.MouseButton1
+                    and Input.UserInputType == Enum.UserInputType.MouseButton1)
+
+            if not Ended then
+                return
+            end
+
+            SliderDragging = false
+            SliderDragInput = nil
+            SetSliderScrollingEnabled(true)
+        end))
         if typeof(Slider.Tooltip) == "string" or typeof(Slider.DisabledTooltip) == "string" then
             Slider.TooltipTable = Library:AddTooltip(Slider.Tooltip, Slider.DisabledTooltip, Bar)
             Slider.TooltipTable.Disabled = Slider.Disabled
@@ -5101,6 +5120,7 @@ do
         if Info.SpecialType == "Player" then
             Info.Values = GetPlayers(Info.ExcludeLocalPlayer)
             Info.AllowNull = true
+            Info.EnablePlayerImages = Info.EnablePlayerImages ~= false
         elseif Info.SpecialType == "Team" then
             Info.Values = GetTeams()
             Info.AllowNull = true
@@ -5172,6 +5192,12 @@ do
             ZIndex = 2,
             Parent = DisplayContainer,
         })
+        if Dropdown.SpecialType == "Player" and Dropdown.EnablePlayerImages then
+            table.insert(Library.Corners, New("UICorner", {
+                CornerRadius = UDim.new(1, 0),
+                Parent = DisplayImage,
+            }))
+        end
         local DisplayButton = New("TextButton", {
             Active = not Dropdown.Disabled,
             BackgroundTransparency = 1,
@@ -5210,19 +5236,25 @@ do
                 Parent = SearchBox,
             })
         end
+        local function IsPlayerValue(Value)
+            return Dropdown.SpecialType == "Player" and typeof(Value) == "Instance" and Value:IsA("Player")
+        end
+        local function GetPlayerText(Value)
+            if not IsPlayerValue(Value) then
+                return nil, nil
+            end
+            local DisplayName = Value.DisplayName ~= "" and Value.DisplayName or Value.Name
+            return DisplayName, "@" .. Value.Name
+        end
         local GetValueImage = function(Value)
             if not Value then
                 return nil
             end
             local ValueImage = nil
-            if Dropdown.SpecialType == "Player" and Dropdown.EnablePlayerImages == true then
-                if typeof(Value) == "Instance" and Value:IsA("Player") then
-                    ValueImage = { Url = string.format("rbxthumb://type=AvatarHeadShot&id=%s&w=48&h=48", tostring(Value.UserId)) }
-                end
-            else
-                if Info.ValueImages and Info.ValueImages[Value] then
-                    ValueImage = Library:GetCustomIcon(Info.ValueImages[Value])
-                end
+            if IsPlayerValue(Value) and Dropdown.EnablePlayerImages == true then
+                ValueImage = { Url = string.format("rbxthumb://type=AvatarHeadShot&id=%s&w=150&h=150", tostring(Value.UserId)) }
+            elseif Info.ValueImages and Info.ValueImages[Value] then
+                ValueImage = Library:GetCustomIcon(Info.ValueImages[Value])
             end
             return ValueImage
         end
@@ -5249,11 +5281,12 @@ do
        	function Dropdown:RecalculateListSize(Count)
 			local ItemCount =
 				Count or GetTableSize(Dropdown.Values)
+            local ItemHeight = (Dropdown.SpecialType == "Player" and Dropdown.EnablePlayerImages) and 46 or 21
 
 			local ItemsHeight = math.clamp(
-				ItemCount * 21,
+				ItemCount * ItemHeight,
 				0,
-				Info.MaxVisibleDropdownItems * 21
+				Info.MaxVisibleDropdownItems * ItemHeight
 			)
 
 			-- Space for the Select All/Deselect All buttons.
@@ -5288,15 +5321,17 @@ do
                         if not ValueImage then
                             ValueImage = GetValueImage(Value)
                         end
+                        local PlayerDisplayName = GetPlayerText(Value)
                         Str = Str
-                            .. (Info.FormatDisplayValue and tostring(Info.FormatDisplayValue(Value)) or tostring(Value))
+                            .. (Info.FormatDisplayValue and tostring(Info.FormatDisplayValue(Value)) or PlayerDisplayName or tostring(Value))
                             .. ", "
                     end
                 end
                 Str = Str:sub(1, #Str - 2)
             else
                 ValueImage = GetValueImage(Dropdown.Value)
-                Str = Dropdown.Value and tostring(Dropdown.Value) or ""
+                local PlayerDisplayName = GetPlayerText(Dropdown.Value)
+                Str = Dropdown.Value and (PlayerDisplayName or tostring(Dropdown.Value)) or ""
                 if Str ~= "" and Info.FormatDisplayValue then
                     Str = tostring(Info.FormatDisplayValue(Str))
                 end
@@ -5513,19 +5548,27 @@ do
             end
             local Count = 0
             for _, Value in Values do
-                local FormattedValue = tostring(Info.FormatListValue and Info.FormatListValue(Value) or Value)
-                if SearchBox and not FormattedValue:lower():match(SearchBox.Text:lower()) then
+                local PlayerDisplayName, PlayerUsername = GetPlayerText(Value)
+                local FormattedValue = tostring(Info.FormatListValue and Info.FormatListValue(Value) or PlayerDisplayName or Value)
+                local SearchValue = FormattedValue
+                if PlayerUsername then
+                    SearchValue ..= " " .. PlayerUsername
+                end
+                if SearchBox and not SearchValue:lower():find(SearchBox.Text:lower(), 1, true) then
                     continue
                 end
                 Count += 1
                 local IsDisabled = table.find(DisabledValues, Value)
                 local Table = {}
                 local ValueImage = GetValueImage(Value)
+                local RichPlayerRow = IsPlayerValue(Value) and Dropdown.EnablePlayerImages == true
+                local RowHeight = RichPlayerRow and 46 or 21
                 local Container = New("Frame", {
                     BackgroundColor3 = "MainColor",
                     BackgroundTransparency = 1,
+                    ClipsDescendants = true,
                     LayoutOrder = IsDisabled and 1 or 0,
-                    Size = UDim2.new(1, 0, 0, 21),
+                    Size = UDim2.new(1, 0, 0, RowHeight),
                     Parent = Info.Multi and ButtonHolder or MenuTable.Menu,
                 })
                 local Image = ValueImage and New("ImageLabel", {
@@ -5534,25 +5577,63 @@ do
                     ImageRectOffset = ValueImage.ImageRectOffset,
                     ImageRectSize = ValueImage.ImageRectSize,
                     ImageTransparency = 0.5,
-                    Size = UDim2.fromOffset(16, 16),
-                    Position = UDim2.fromOffset(4, 3),
+                    Size = RichPlayerRow and UDim2.fromOffset(36, 36) or UDim2.fromOffset(16, 16),
+                    Position = RichPlayerRow and UDim2.fromOffset(6, 5) or UDim2.fromOffset(4, 3),
                     Parent = Container,
                 })
+                if Image and RichPlayerRow then
+                    table.insert(Library.Corners, New("UICorner", {
+                        CornerRadius = UDim.new(1, 0),
+                        Parent = Image,
+                    }))
+                    New("UIStroke", {
+                        Color = "OutlineColor",
+                        Transparency = 0.15,
+                        Parent = Image,
+                    })
+                end
                 local Button = New("TextButton", {
                     BackgroundTransparency = 1,
-                    Size = ValueImage and UDim2.new(1, -18, 0, 21) or UDim2.new(1, 0, 0, 21),
-                    Position = ValueImage and UDim2.fromOffset(18, 0) or UDim2.fromOffset(0, 0),
-                    Text = FormattedValue,
+                    Size = RichPlayerRow and UDim2.fromScale(1, 1) or ValueImage and UDim2.new(1, -18, 0, 21) or UDim2.new(1, 0, 0, 21),
+                    Position = RichPlayerRow and UDim2.fromOffset(0, 0) or ValueImage and UDim2.fromOffset(18, 0) or UDim2.fromOffset(0, 0),
+                    Text = RichPlayerRow and "" or FormattedValue,
                     TextSize = 14,
                     TextTransparency = 0.5,
                     TextXAlignment = Enum.TextXAlignment.Left,
                     Parent = Container,
                 })
-                New("UIPadding", {
-                    PaddingLeft = UDim.new(0, 7),
-                    PaddingRight = UDim.new(0, 7),
-                    Parent = Button,
-                })
+                local PrimaryLabel
+                local SecondaryLabel
+                if RichPlayerRow then
+                    PrimaryLabel = New("TextLabel", {
+                        BackgroundTransparency = 1,
+                        Position = UDim2.fromOffset(50, 4),
+                        Size = UDim2.new(1, -58, 0, 19),
+                        Text = FormattedValue,
+                        TextSize = 14,
+                        TextTransparency = 0.5,
+                        TextTruncate = Enum.TextTruncate.AtEnd,
+                        TextXAlignment = Enum.TextXAlignment.Left,
+                        Parent = Container,
+                    })
+                    SecondaryLabel = New("TextLabel", {
+                        BackgroundTransparency = 1,
+                        Position = UDim2.fromOffset(50, 22),
+                        Size = UDim2.new(1, -58, 0, 17),
+                        Text = PlayerUsername or "",
+                        TextSize = 12,
+                        TextTransparency = 0.68,
+                        TextTruncate = Enum.TextTruncate.AtEnd,
+                        TextXAlignment = Enum.TextXAlignment.Left,
+                        Parent = Container,
+                    })
+                else
+                    New("UIPadding", {
+                        PaddingLeft = UDim.new(0, 7),
+                        PaddingRight = UDim.new(0, 7),
+                        Parent = Button,
+                    })
+                end
                 local Selected
                 if Info.Multi then
                     Selected = Dropdown.Value[Value]
@@ -5566,9 +5647,16 @@ do
                         Selected = Dropdown.Value == Value
                     end
                     Container.BackgroundTransparency = Selected and 0 or 1
-                    Button.TextTransparency = IsDisabled and 0.8 or Selected and 0 or 0.5
+                    local MainTransparency = IsDisabled and 0.8 or Selected and 0 or 0.5
+                    Button.TextTransparency = MainTransparency
+                    if PrimaryLabel then
+                        PrimaryLabel.TextTransparency = MainTransparency
+                    end
+                    if SecondaryLabel then
+                        SecondaryLabel.TextTransparency = IsDisabled and 0.85 or Selected and 0.25 or 0.68
+                    end
                     if Image then
-                        Image.ImageTransparency = IsDisabled and 0.8 or Selected and 0 or 0.5
+                        Image.ImageTransparency = IsDisabled and 0.8 or Selected and 0 or 0.15
                     end
                 end
                 if not IsDisabled then
