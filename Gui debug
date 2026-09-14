@@ -1,3 +1,4 @@
+
 local cloneref = (cloneref or clonereference or function(instance: any)
     return instance
 end)
@@ -5135,6 +5136,7 @@ do
             SpecialType = Info.SpecialType,
             ExcludeLocalPlayer = Info.ExcludeLocalPlayer,
             EnablePlayerImages = Info.EnablePlayerImages,
+            PlayerTexts = {},
             Tooltip = Info.Tooltip,
             DisabledTooltip = Info.DisabledTooltip,
             TooltipTable = nil,
@@ -5549,6 +5551,7 @@ do
             local Count = 0
             for _, Value in Values do
                 local PlayerDisplayName, PlayerUsername = GetPlayerText(Value)
+                local PlayerCustomText = Dropdown.PlayerTexts[Value]
                 local FormattedValue = tostring(Info.FormatListValue and Info.FormatListValue(Value) or PlayerDisplayName or Value)
                 local SearchValue = FormattedValue
                 if PlayerUsername then
@@ -5609,7 +5612,7 @@ do
                         BackgroundTransparency = 1,
                         Position = UDim2.fromOffset(50, 4),
                         Size = UDim2.new(1, -58, 0, 19),
-                        Text = FormattedValue,
+                        Text = PlayerUsername and (FormattedValue .. " " .. PlayerUsername) or FormattedValue,
                         TextSize = 14,
                         TextTransparency = 0.5,
                         TextTruncate = Enum.TextTruncate.AtEnd,
@@ -5620,7 +5623,7 @@ do
                         BackgroundTransparency = 1,
                         Position = UDim2.fromOffset(50, 22),
                         Size = UDim2.new(1, -58, 0, 17),
-                        Text = PlayerUsername or "",
+                        Text = PlayerCustomText or "",
                         TextSize = 12,
                         TextTransparency = 0.68,
                         TextTruncate = Enum.TextTruncate.AtEnd,
@@ -5688,6 +5691,18 @@ do
                 Buttons[Button] = Table
             end
             Dropdown:RecalculateListSize(Count)
+        end
+        function Dropdown:SetPlayerText(Player, Text)
+            if not IsPlayerValue(Player) then
+                return false
+            end
+            if Text == nil or tostring(Text) == "" then
+                Dropdown.PlayerTexts[Player] = nil
+            else
+                Dropdown.PlayerTexts[Player] = tostring(Text)
+            end
+            Dropdown:BuildDropdownList()
+            return true
         end
         function Dropdown:SetValue(Value, CallbackValue, Force)
             if Info.Multi then
