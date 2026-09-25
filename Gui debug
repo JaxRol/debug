@@ -6575,6 +6575,867 @@ do
         table.insert(Library.DependencyBoxes, DepGroupbox)
         return DepGroupbox
     end
+    function Funcs:AddAnimationCatalog(Idx, Info)
+        Info = Info or {}
+        local Groupbox = self
+        local Container = Groupbox.Container
+        local AvatarEditorService = cloneref(game:GetService("AvatarEditorService"))
+        local AssetService = cloneref(game:GetService("AssetService"))
+        local MarketplaceService = cloneref(game:GetService("MarketplaceService"))
+        local PlayersService = cloneref(game:GetService("Players"))
+        local LocalPlayer = PlayersService.LocalPlayer
+
+        local Catalog = {
+            Text = typeof(Info.Text) == "string" and Info.Text or "Animation Pack",
+            Placeholder = typeof(Info.Placeholder) == "string" and Info.Placeholder or "Browse Roblox animation packs...",
+            SearchPlaceholder = typeof(Info.SearchPlaceholder) == "string" and Info.SearchPlaceholder or "Search Roblox animation packs...",
+            PageSize = math.clamp(tonumber(Info.PageSize) or 20, 10, 30),
+            SearchDebounce = math.max(tonumber(Info.SearchDebounce) or 0.3, 0),
+            KeepOnRespawn = Info.KeepOnRespawn ~= false,
+            Callback = Info.Callback or function() end,
+            Changed = Info.Changed or function() end,
+            Disabled = Library:GetDisabledState(Info.Disabled),
+            Visible = Info.Visible ~= false,
+            Type = "AnimationCatalog",
+            Value = nil,
+            SelectedResult = nil,
+            EquippedPack = nil,
+            Enabled = false,
+            SearchGeneration = 0,
+            Applying = false,
+            Results = {},
+            ResultById = {},
+            QueryCache = {},
+            PackCache = {},
+            ProductInfoCache = {},
+            AnimationIdsCache = {},
+            CurrentPages = nil,
+            CurrentQuery = "",
+            CurrentCharacter = nil,
+            Animate = nil,
+            AnimateWasDisabled = nil,
+            OriginalSlots = {},
+            Cards = {},
+            SlotOrder = {"Idle1", "Idle2", "Walk", "Run", "Jump", "Fall", "Climb", "Swim", "SwimIdle"},
+            SlotPaths = {
+                Idle1 = {Container = "idle", Animation = "Animation1"},
+                Idle2 = {Container = "idle", Animation = "Animation2"},
+                Walk = {Container = "walk", Animation = "WalkAnim"},
+                Run = {Container = "run", Animation = "RunAnim"},
+                Jump = {Container = "jump", Animation = "JumpAnim"},
+                Fall = {Container = "fall", Animation = "FallAnim"},
+                Climb = {Container = "climb", Animation = "ClimbAnim"},
+                Swim = {Container = "swim", Animation = "Swim"},
+                SwimIdle = {Container = "swimidle", Animation = "SwimIdle"},
+            },
+        }
+
+        local Holder = New("Frame", {
+            BackgroundTransparency = 1,
+            Size = UDim2.new(1, 0, 0, Catalog.Text and 39 or 21),
+            Visible = Catalog.Visible,
+            Parent = Container,
+        })
+        local Label = New("TextLabel", {
+            BackgroundTransparency = 1,
+            Size = UDim2.new(1, 0, 0, 14),
+            Text = Catalog.Text,
+            TextSize = 14,
+            TextXAlignment = Enum.TextXAlignment.Left,
+            ZIndex = 3,
+            Parent = Holder,
+        })
+        local DisplayButton = New("TextButton", {
+            BackgroundColor3 = "MainColor",
+            Position = UDim2.new(0, 0, 0, Catalog.Text and 18 or 0),
+            Size = UDim2.new(1, 0, 0, 21),
+            Text = "",
+            ZIndex = 3,
+            Parent = Holder,
+        })
+        Library:AddOutline(DisplayButton)
+        New("UICorner", {CornerRadius = UDim.new(0, Library.CornerRadius), Parent = DisplayButton})
+        local DisplayText = New("TextLabel", {
+            BackgroundTransparency = 1,
+            Position = UDim2.fromOffset(7, 0),
+            Size = UDim2.new(1, -30, 1, 0),
+            Text = Catalog.Placeholder,
+            TextSize = 13,
+            TextTruncate = Enum.TextTruncate.AtEnd,
+            TextXAlignment = Enum.TextXAlignment.Left,
+            ZIndex = 4,
+            Parent = DisplayButton,
+        })
+        local Arrow = New("TextLabel", {
+            BackgroundTransparency = 1,
+            AnchorPoint = Vector2.new(1, 0),
+            Position = UDim2.new(1, -7, 0, 0),
+            Size = UDim2.fromOffset(16, 21),
+            Text = "›",
+            TextSize = 18,
+            TextXAlignment = Enum.TextXAlignment.Right,
+            ZIndex = 4,
+            Parent = DisplayButton,
+        })
+
+        local ContentFrame = Groupbox.BoxHolder and Groupbox.BoxHolder.Parent or Container.Parent
+        local TabContainer = ContentFrame and ContentFrame.Parent
+        assert(TabContainer, "Animation catalog could not resolve the subpage container")
+
+        local Overlay = New("Frame", {
+            Active = true,
+            BackgroundColor3 = "BackgroundColor",
+            BorderSizePixel = 0,
+            Visible = false,
+            ZIndex = 60,
+            Parent = TabContainer,
+        })
+        Library:AddOutline(Overlay)
+        New("UICorner", {CornerRadius = UDim.new(0, Library.CornerRadius), Parent = Overlay})
+
+        local SearchBoxHolder = New("Frame", {
+            BackgroundColor3 = "MainColor",
+            Position = UDim2.fromOffset(8, 8),
+            Size = UDim2.new(1, -160, 0, 32),
+            ZIndex = 62,
+            Parent = Overlay,
+        })
+        Library:AddOutline(SearchBoxHolder)
+        New("UICorner", {CornerRadius = UDim.new(0, Library.CornerRadius), Parent = SearchBoxHolder})
+        local SearchBox = New("TextBox", {
+            BackgroundTransparency = 1,
+            ClearTextOnFocus = false,
+            Position = UDim2.fromOffset(8, 0),
+            Size = UDim2.new(1, -16, 1, 0),
+            PlaceholderText = Catalog.SearchPlaceholder,
+            Text = "",
+            TextSize = 13,
+            TextXAlignment = Enum.TextXAlignment.Left,
+            ZIndex = 63,
+            Parent = SearchBoxHolder,
+        })
+        local MoreButton = New("TextButton", {
+            BackgroundColor3 = "MainColor",
+            AnchorPoint = Vector2.new(1, 0),
+            Position = UDim2.new(1, -52, 0, 8),
+            Size = UDim2.fromOffset(92, 32),
+            Text = "Load More",
+            TextSize = 12,
+            Visible = false,
+            ZIndex = 62,
+            Parent = Overlay,
+        })
+        Library:AddOutline(MoreButton)
+        New("UICorner", {CornerRadius = UDim.new(0, Library.CornerRadius), Parent = MoreButton})
+        local CloseButton = New("TextButton", {
+            BackgroundColor3 = "MainColor",
+            AnchorPoint = Vector2.new(1, 0),
+            Position = UDim2.new(1, -8, 0, 8),
+            Size = UDim2.fromOffset(36, 32),
+            Text = "×",
+            TextSize = 18,
+            ZIndex = 62,
+            Parent = Overlay,
+        })
+        Library:AddOutline(CloseButton)
+        New("UICorner", {CornerRadius = UDim.new(0, Library.CornerRadius), Parent = CloseButton})
+
+        local StatusLabel = New("TextLabel", {
+            BackgroundTransparency = 1,
+            Position = UDim2.fromOffset(9, 44),
+            Size = UDim2.new(1, -18, 0, 18),
+            Text = "Search Roblox animation packs",
+            TextSize = 12,
+            TextTransparency = 0.25,
+            TextTruncate = Enum.TextTruncate.AtEnd,
+            TextXAlignment = Enum.TextXAlignment.Left,
+            ZIndex = 62,
+            Parent = Overlay,
+        })
+        local Results = New("ScrollingFrame", {
+            Active = true,
+            AutomaticCanvasSize = Enum.AutomaticSize.Y,
+            BackgroundTransparency = 1,
+            BorderSizePixel = 0,
+            CanvasSize = UDim2.new(),
+            Position = UDim2.fromOffset(8, 64),
+            ScrollBarImageColor3 = "AccentColor",
+            ScrollBarThickness = Library.IsMobile and 5 or 3,
+            Size = UDim2.new(1, -16, 1, -122),
+            ZIndex = 61,
+            Parent = Overlay,
+        })
+        local Grid = New("UIGridLayout", {
+            CellPadding = UDim2.fromOffset(8, 8),
+            CellSize = UDim2.fromOffset(140, 174),
+            FillDirection = Enum.FillDirection.Horizontal,
+            HorizontalAlignment = Enum.HorizontalAlignment.Center,
+            SortOrder = Enum.SortOrder.LayoutOrder,
+            Parent = Results,
+        })
+        New("UIPadding", {
+            PaddingTop = UDim.new(0, 4),
+            PaddingBottom = UDim.new(0, 8),
+            PaddingLeft = UDim.new(0, 2),
+            PaddingRight = UDim.new(0, 2),
+            Parent = Results,
+        })
+        if Library.MakeDragScrollable then
+            Library:MakeDragScrollable(Results)
+        end
+
+        local Footer = New("Frame", {
+            BackgroundColor3 = "MainColor",
+            AnchorPoint = Vector2.new(0, 1),
+            Position = UDim2.new(0, 8, 1, -8),
+            Size = UDim2.new(1, -16, 0, 48),
+            ZIndex = 62,
+            Parent = Overlay,
+        })
+        Library:AddOutline(Footer)
+        New("UICorner", {CornerRadius = UDim.new(0, Library.CornerRadius), Parent = Footer})
+        local SelectionLabel = New("TextLabel", {
+            BackgroundTransparency = 1,
+            Position = UDim2.fromOffset(8, 0),
+            Size = UDim2.new(1, -202, 1, 0),
+            Text = "Selected: none",
+            TextSize = 12,
+            TextTruncate = Enum.TextTruncate.AtEnd,
+            TextXAlignment = Enum.TextXAlignment.Left,
+            ZIndex = 63,
+            Parent = Footer,
+        })
+        local EquipButton = New("TextButton", {
+            BackgroundColor3 = "AccentColor",
+            AnchorPoint = Vector2.new(1, 0.5),
+            Position = UDim2.new(1, -102, 0.5, 0),
+            Size = UDim2.fromOffset(88, 30),
+            Text = "Equip",
+            TextSize = 12,
+            ZIndex = 63,
+            Parent = Footer,
+        })
+        Library:AddOutline(EquipButton)
+        New("UICorner", {CornerRadius = UDim.new(0, Library.CornerRadius), Parent = EquipButton})
+        local RestoreButton = New("TextButton", {
+            BackgroundColor3 = "MainColor",
+            AnchorPoint = Vector2.new(1, 0.5),
+            Position = UDim2.new(1, -8, 0.5, 0),
+            Size = UDim2.fromOffset(88, 30),
+            Text = "Restore",
+            TextSize = 12,
+            ZIndex = 63,
+            Parent = Footer,
+        })
+        Library:AddOutline(RestoreButton)
+        New("UICorner", {CornerRadius = UDim.new(0, Library.CornerRadius), Parent = RestoreButton})
+
+        function Catalog:Notify(Title, Description)
+            if Library.Notify then
+                Library:Notify({Title = Title, Description = Description, Time = 4})
+            end
+        end
+
+        function Catalog:NormalizeAssetId(Value)
+            if type(Value) == "number" then
+                if Value <= 0 then return nil end
+                return string.format("%.0f", Value)
+            end
+            local AssetId = tostring(Value or ""):match("%d+")
+            if not AssetId or AssetId == "0" then return nil end
+            return AssetId
+        end
+
+        function Catalog:UpdateOverlayBounds()
+            if not ContentFrame or not ContentFrame.Parent then return end
+            local Y = ContentFrame.Position.Y
+            Overlay.Position = UDim2.new(0, 0, Y.Scale, Y.Offset)
+            Overlay.Size = UDim2.new(1, 0, 1 - Y.Scale, -Y.Offset)
+        end
+
+        function Catalog:UpdateGrid()
+            local Scale = tonumber(Library.DPIScale) or 1
+            if Scale <= 0 then Scale = 1 end
+            local Width = math.max(Results.AbsoluteSize.X / Scale, 240)
+            local Columns = Width < 420 and 2 or (Width < 650 and 3 or 4)
+            local Padding = 8
+            local CellWidth = math.floor((Width - ((Columns - 1) * Padding) - 8) / Columns)
+            CellWidth = math.clamp(CellWidth, 106, 190)
+            Grid.CellSize = UDim2.fromOffset(CellWidth, math.clamp(CellWidth + 42, 148, 220))
+        end
+
+        function Catalog:Display()
+            local ResultName = self.EquippedPack and self.EquippedPack.Name or (self.SelectedResult and self.SelectedResult.Name)
+            DisplayText.Text = ResultName or self.Placeholder
+            SelectionLabel.Text = self.SelectedResult and ("Selected: " .. tostring(self.SelectedResult.Name)) or "Selected: none"
+        end
+
+        function Catalog:GetMarketplaceInfo(ItemId, InfoType)
+            ItemId = self:NormalizeAssetId(ItemId)
+            if not ItemId then return nil end
+            local InfoName = InfoType and InfoType.Name or "Asset"
+            local CacheKey = InfoName .. ":" .. ItemId
+            if self.ProductInfoCache[CacheKey] ~= nil then
+                return self.ProductInfoCache[CacheKey] or nil
+            end
+            local Method = MarketplaceService.GetProductInfoAsync or MarketplaceService.GetProductInfo
+            local Success, ProductInfo = pcall(Method, MarketplaceService, tonumber(ItemId), InfoType or Enum.InfoType.Asset)
+            if not Success or type(ProductInfo) ~= "table" then
+                self.ProductInfoCache[CacheKey] = false
+                return nil
+            end
+            self.ProductInfoCache[CacheKey] = ProductInfo
+            return ProductInfo
+        end
+
+        function Catalog:ResolveAnimationIds(CatalogId)
+            CatalogId = self:NormalizeAssetId(CatalogId)
+            if not CatalogId then return nil end
+            if self.AnimationIdsCache[CatalogId] ~= nil then
+                return self.AnimationIdsCache[CatalogId] or nil
+            end
+            local ProductInfo = self:GetMarketplaceInfo(CatalogId, Enum.InfoType.Asset)
+            local AssetTypeId = ProductInfo and tonumber(ProductInfo.AssetTypeId)
+            if AssetTypeId == Enum.AssetType.Animation.Value then
+                local DirectIds = {CatalogId}
+                self.AnimationIdsCache[CatalogId] = DirectIds
+                return DirectIds
+            end
+            local Success, Objects = pcall(game.GetObjects, game, "rbxassetid://" .. CatalogId)
+            local ResolvedIds = {}
+            local SeenIds = {}
+            if Success and type(Objects) == "table" then
+                for _, Object in next, Objects do
+                    local Animations = {}
+                    if Object:IsA("Animation") then
+                        table.insert(Animations, Object)
+                    elseif Object.QueryDescendants then
+                        local QuerySuccess, QueryResult = pcall(function()
+                            return Object:QueryDescendants("Animation")
+                        end)
+                        if QuerySuccess and type(QueryResult) == "table" then
+                            Animations = QueryResult
+                        end
+                    end
+                    if #Animations == 0 then
+                        local FirstAnimation = Object:FindFirstChildWhichIsA("Animation", true)
+                        if FirstAnimation then table.insert(Animations, FirstAnimation) end
+                    end
+                    for _, Animation in next, Animations do
+                        local ResolvedId = self:NormalizeAssetId(Animation.AnimationId)
+                        if ResolvedId and not SeenIds[ResolvedId] then
+                            SeenIds[ResolvedId] = true
+                            table.insert(ResolvedIds, ResolvedId)
+                        end
+                    end
+                    pcall(Object.Destroy, Object)
+                end
+            end
+            if #ResolvedIds == 0 then
+                self.AnimationIdsCache[CatalogId] = false
+                return nil
+            end
+            self.AnimationIdsCache[CatalogId] = ResolvedIds
+            return ResolvedIds
+        end
+
+        function Catalog:GetAnimationType(Item, ProductInfo)
+            local Name = string.lower(tostring(Item.Name or Item.name or (ProductInfo and ProductInfo.Name) or ""))
+            local AssetType = string.lower(tostring(Item.AssetType or Item.assetType or ""))
+            if string.find(AssetType, "idle", 1, true) then return "Idle" end
+            if string.find(AssetType, "walk", 1, true) then return "Walk" end
+            if string.find(AssetType, "run", 1, true) then return "Run" end
+            if string.find(AssetType, "jump", 1, true) then return "Jump" end
+            if string.find(AssetType, "fall", 1, true) then return "Fall" end
+            if string.find(AssetType, "climb", 1, true) then return "Climb" end
+            if string.find(AssetType, "swim", 1, true) then
+                return string.find(Name, "idle", 1, true) and "SwimIdle" or "Swim"
+            end
+            if string.find(Name, "swim", 1, true) then return string.find(Name, "idle", 1, true) and "SwimIdle" or "Swim" end
+            if string.find(Name, "idle", 1, true) then return "Idle" end
+            if string.find(Name, "walk", 1, true) then return "Walk" end
+            if string.find(Name, "run", 1, true) then return "Run" end
+            if string.find(Name, "jump", 1, true) then return "Jump" end
+            if string.find(Name, "fall", 1, true) then return "Fall" end
+            if string.find(Name, "climb", 1, true) then return "Climb" end
+            local AssetTypeId = ProductInfo and tonumber(ProductInfo.AssetTypeId)
+            if AssetTypeId == Enum.AssetType.ClimbAnimation.Value then return "Climb" end
+            if AssetTypeId == Enum.AssetType.FallAnimation.Value then return "Fall" end
+            if AssetTypeId == Enum.AssetType.IdleAnimation.Value then return "Idle" end
+            if AssetTypeId == Enum.AssetType.JumpAnimation.Value then return "Jump" end
+            if AssetTypeId == Enum.AssetType.RunAnimation.Value then return "Run" end
+            if AssetTypeId == Enum.AssetType.SwimAnimation.Value then return string.find(Name, "idle", 1, true) and "SwimIdle" or "Swim" end
+            if AssetTypeId == Enum.AssetType.WalkAnimation.Value then return "Walk" end
+            return nil
+        end
+
+        function Catalog:GetBundleItems(Result)
+            if type(Result) == "table" then
+                local BundledItems = Result.BundledItems or Result.bundledItems
+                if type(BundledItems) == "table" and #BundledItems > 0 then return BundledItems end
+            end
+            local BundleId = self:NormalizeAssetId(type(Result) == "table" and (Result.Id or Result.id) or Result)
+            if not BundleId then return nil end
+            local Success, Details = pcall(AssetService.GetBundleDetailsAsync, AssetService, tonumber(BundleId))
+            if Success and type(Details) == "table" then
+                return Details.Items or Details.items
+            end
+            local MarketplaceInfo = self:GetMarketplaceInfo(BundleId, Enum.InfoType.Bundle)
+            return MarketplaceInfo and (MarketplaceInfo.Items or MarketplaceInfo.items) or nil
+        end
+
+        function Catalog:ResolvePack(Result)
+            local BundleId = self:NormalizeAssetId(type(Result) == "table" and (Result.Id or Result.id) or Result)
+            if not BundleId then return nil, "Invalid animation pack ID" end
+            if self.PackCache[BundleId] then return self.PackCache[BundleId] end
+            local Items = self:GetBundleItems(Result)
+            if type(Items) ~= "table" or #Items == 0 then return nil, "Animation pack details could not be loaded" end
+            local Pack = {
+                Id = BundleId,
+                Name = tostring(type(Result) == "table" and (Result.Name or Result.name) or ("Animation Pack " .. BundleId)),
+            }
+            local Pending = {}
+            for _, Item in next, Items do
+                local ItemId = self:NormalizeAssetId(Item.Id or Item.id)
+                if ItemId then table.insert(Pending, {Item = Item, Id = ItemId}) end
+            end
+            local ResultsByIndex = {}
+            local Remaining = #Pending
+            for Index, Entry in next, Pending do
+                task.spawn(function()
+                    local Resolved
+                    pcall(function()
+                        local ProductInfo = self:GetMarketplaceInfo(Entry.Id, Enum.InfoType.Asset)
+                        local AnimationType = self:GetAnimationType(Entry.Item, ProductInfo)
+                        if AnimationType then
+                            local Ids = self:ResolveAnimationIds(Entry.Id)
+                            if Ids then Resolved = {Type = AnimationType, Ids = Ids} end
+                        end
+                    end)
+                    ResultsByIndex[Index] = Resolved or false
+                    Remaining = Remaining - 1
+                end)
+            end
+            while Remaining > 0 do task.wait() end
+            for Index = 1, #Pending do
+                local Resolved = ResultsByIndex[Index]
+                if Resolved then
+                    if Resolved.Type == "Idle" then
+                        for _, AnimationId in next, Resolved.Ids do
+                            if not Pack.Idle1 then Pack.Idle1 = AnimationId
+                            elseif not Pack.Idle2 then Pack.Idle2 = AnimationId break end
+                        end
+                    else
+                        Pack[Resolved.Type] = Resolved.Ids[1]
+                    end
+                end
+            end
+            Pack.Idle2 = Pack.Idle2 or Pack.Idle1
+            Pack.Walk = Pack.Walk or Pack.Run
+            Pack.Run = Pack.Run or Pack.Walk
+            Pack.Swim = Pack.Swim or Pack.SwimIdle
+            Pack.SwimIdle = Pack.SwimIdle or Pack.Swim
+            local HasAnimation = false
+            for _, SlotKey in next, self.SlotOrder do
+                if Pack[SlotKey] then HasAnimation = true break end
+            end
+            if not HasAnimation then return nil, "No playable locomotion animations were found in this bundle" end
+            self.PackCache[BundleId] = Pack
+            return Pack
+        end
+
+        function Catalog:FindSlotAnimation(Animate, SlotKey)
+            local Path = self.SlotPaths[SlotKey]
+            if not Animate or not Path then return nil end
+            local Slot = Animate:FindFirstChild(Path.Container)
+            local Animation = Slot and Slot:FindFirstChild(Path.Animation)
+            if Animation and Animation:IsA("Animation") then return Animation end
+            if Animate.QueryDescendants then
+                local Success, Animations = pcall(function() return Animate:QueryDescendants("Animation") end)
+                if Success and type(Animations) == "table" then
+                    local ContainerName = string.lower(Path.Container)
+                    local AnimationName = string.lower(Path.Animation)
+                    for _, Candidate in next, Animations do
+                        local Parent = Candidate.Parent
+                        if string.lower(Candidate.Name) == AnimationName and Parent and string.lower(Parent.Name) == ContainerName then return Candidate end
+                    end
+                end
+            end
+            return nil
+        end
+
+        function Catalog:CaptureCharacter(Character)
+            Character = Character or LocalPlayer.Character
+            if not Character or not Character.Parent then return false, "Character is not ready" end
+            local Humanoid = Character:FindFirstChildOfClass("Humanoid")
+            local Animate = Character:FindFirstChild("Animate")
+            if not Humanoid or Humanoid.Health <= 0 then return false, "Humanoid is not ready" end
+            if not Animate then return false, "The character Animate script was not found" end
+            if self.CurrentCharacter == Character and self.Animate == Animate then return true, Humanoid, Animate end
+            self.CurrentCharacter = Character
+            self.Animate = Animate
+            self.AnimateWasDisabled = Animate.Disabled
+            self.OriginalSlots = {}
+            for _, SlotKey in next, self.SlotOrder do
+                local Animation = self:FindSlotAnimation(Animate, SlotKey)
+                if Animation then
+                    self.OriginalSlots[SlotKey] = {Animation = Animation, AnimationId = Animation.AnimationId}
+                end
+            end
+            return true, Humanoid, Animate
+        end
+
+        function Catalog:StopMovementTracks(Humanoid)
+            local Animator = Humanoid and Humanoid:FindFirstChildOfClass("Animator")
+            if not Animator then return end
+            for _, Track in next, Animator:GetPlayingAnimationTracks() do
+                local Priority = Track.Priority
+                if Priority == Enum.AnimationPriority.Core or Priority == Enum.AnimationPriority.Idle or Priority == Enum.AnimationPriority.Movement then
+                    pcall(Track.Stop, Track, 0)
+                    pcall(Track.Destroy, Track)
+                end
+            end
+        end
+
+        function Catalog:ApplyPackData(Pack, Character, IsRespawn)
+            if self.Applying then return false, "An animation pack is already being applied" end
+            self.Applying = true
+            local Success, Humanoid, Animate = self:CaptureCharacter(Character)
+            if not Success then self.Applying = false return false, Humanoid end
+            Animate.Disabled = true
+            self:StopMovementTracks(Humanoid)
+            for _, SlotKey in next, self.SlotOrder do
+                local Original = self.OriginalSlots[SlotKey]
+                local Animation = Original and Original.Animation
+                if Animation and Animation.Parent then
+                    local AnimationId = Pack[SlotKey]
+                    Animation.AnimationId = AnimationId and ("rbxassetid://" .. AnimationId) or Original.AnimationId
+                end
+            end
+            task.wait()
+            if Animate.Parent then Animate.Disabled = false end
+            self.Applying = false
+            self.Enabled = true
+            self.EquippedPack = Pack
+            self.Value = Pack.Id
+            self:Display()
+            self:RefreshCards()
+            if not IsRespawn then
+                Library:SafeCallback(self.Callback, Pack)
+                Library:SafeCallback(self.Changed, Pack)
+            end
+            return true
+        end
+
+        function Catalog:Restore()
+            self.Enabled = false
+            local Character = self.CurrentCharacter
+            local Animate = self.Animate
+            if Character and Character.Parent and Animate and Animate.Parent then
+                local Humanoid = Character:FindFirstChildOfClass("Humanoid")
+                Animate.Disabled = true
+                self:StopMovementTracks(Humanoid)
+                for _, SlotKey in next, self.SlotOrder do
+                    local Original = self.OriginalSlots[SlotKey]
+                    if Original and Original.Animation and Original.Animation.Parent then
+                        Original.Animation.AnimationId = Original.AnimationId
+                    end
+                end
+                task.wait()
+                if Animate.Parent then Animate.Disabled = self.AnimateWasDisabled == true end
+            end
+            self.EquippedPack = nil
+            self.Value = nil
+            self:Display()
+            self:RefreshCards()
+            Library:SafeCallback(self.Callback, nil)
+            Library:SafeCallback(self.Changed, nil)
+            return true
+        end
+
+        function Catalog:SelectResult(Result)
+            self.SelectedResult = Result
+            self:Display()
+            self:RefreshCards()
+        end
+
+        function Catalog:EquipSelected()
+            if self.Disabled then return end
+            local Result = self.SelectedResult
+            if not Result then self:Notify("Animation Packs", "Select an animation pack first") return end
+            StatusLabel.Text = "Loading " .. tostring(Result.Name) .. "..."
+            EquipButton.Text = "Loading..."
+            task.spawn(function()
+                local Pack, ErrorMessage = self:ResolvePack(Result)
+                if not Pack then
+                    StatusLabel.Text = tostring(ErrorMessage or "Animation pack could not be loaded")
+                    EquipButton.Text = "Equip"
+                    self:Notify("Animation Packs", StatusLabel.Text)
+                    return
+                end
+                local Applied, ApplyError = self:ApplyPackData(Pack)
+                EquipButton.Text = "Equip"
+                if Applied then
+                    StatusLabel.Text = "Equipped: " .. tostring(Pack.Name)
+                else
+                    StatusLabel.Text = tostring(ApplyError or "Animation pack could not be equipped")
+                    self:Notify("Animation Packs", StatusLabel.Text)
+                end
+            end)
+        end
+
+        function Catalog:SetValue(Value)
+            local Result
+            if type(Value) == "table" then
+                Result = Value
+            else
+                local BundleId = self:NormalizeAssetId(Value)
+                if BundleId then Result = {Id = BundleId, Name = "Animation Pack " .. BundleId} end
+            end
+            if not Result then return false end
+            self:SelectResult(Result)
+            self:EquipSelected()
+            return true
+        end
+
+        function Catalog:ClearCards()
+            for _, Card in next, self.Cards do
+                if Card.Frame and Card.Frame.Parent then Card.Frame:Destroy() end
+            end
+            table.clear(self.Cards)
+        end
+
+        function Catalog:RefreshCards()
+            for BundleId, Card in next, self.Cards do
+                local Selected = self.SelectedResult and tostring(self.SelectedResult.Id) == tostring(BundleId)
+                local Equipped = self.EquippedPack and tostring(self.EquippedPack.Id) == tostring(BundleId)
+                Card.Stroke.Color = Selected and Library.Scheme.AccentColor or Library.Scheme.OutlineColor
+                Card.Stroke.Thickness = Selected and 2 or 1
+                Card.Badge.Visible = Equipped == true
+            end
+        end
+
+        function Catalog:CreateCard(Result, LayoutOrder)
+            local BundleId = self:NormalizeAssetId(Result.Id or Result.id)
+            if not BundleId then return end
+            local Card = New("TextButton", {
+                BackgroundColor3 = "MainColor",
+                LayoutOrder = LayoutOrder,
+                Text = "",
+                ZIndex = 62,
+                Parent = Results,
+            })
+            New("UICorner", {CornerRadius = UDim.new(0, Library.CornerRadius), Parent = Card})
+            local Stroke = New("UIStroke", {Color = "OutlineColor", Thickness = 1, Parent = Card})
+            local Image = New("ImageLabel", {
+                BackgroundColor3 = "BackgroundColor",
+                Image = string.format("rbxthumb://type=BundleThumbnail&id=%s&w=150&h=150", BundleId),
+                Position = UDim2.fromOffset(7, 7),
+                ScaleType = Enum.ScaleType.Fit,
+                Size = UDim2.new(1, -14, 1, -48),
+                ZIndex = 63,
+                Parent = Card,
+            })
+            New("UICorner", {CornerRadius = UDim.new(0, math.max(Library.CornerRadius - 1, 0)), Parent = Image})
+            New("TextLabel", {
+                BackgroundTransparency = 1,
+                AnchorPoint = Vector2.new(0, 1),
+                Position = UDim2.new(0, 7, 1, -5),
+                Size = UDim2.new(1, -14, 0, 34),
+                Text = tostring(Result.Name or Result.name or ("Animation Pack " .. BundleId)),
+                TextSize = Library.IsMobile and 11 or 12,
+                TextTruncate = Enum.TextTruncate.AtEnd,
+                TextWrapped = true,
+                TextXAlignment = Enum.TextXAlignment.Left,
+                TextYAlignment = Enum.TextYAlignment.Bottom,
+                ZIndex = 63,
+                Parent = Card,
+            })
+            local Badge = New("TextLabel", {
+                BackgroundColor3 = "AccentColor",
+                Position = UDim2.fromOffset(7, 7),
+                Size = UDim2.fromOffset(66, 20),
+                Text = "EQUIPPED",
+                TextSize = 9,
+                Visible = false,
+                ZIndex = 64,
+                Parent = Card,
+            })
+            New("UICorner", {CornerRadius = UDim.new(0, Library.CornerRadius), Parent = Badge})
+            self.Cards[BundleId] = {Frame = Card, Stroke = Stroke, Badge = Badge}
+            Library:GiveSignal(Card.MouseButton1Click:Connect(function()
+                if not self.Disabled then self:SelectResult(Result) end
+            end))
+        end
+
+        function Catalog:RenderResults()
+            self:ClearCards()
+            self:UpdateGrid()
+            for Index, Result in next, self.Results do self:CreateCard(Result, Index) end
+            self:RefreshCards()
+            if #self.Results == 0 then
+                StatusLabel.Text = self.CurrentQuery ~= "" and ("No animation packs found for \"" .. self.CurrentQuery .. "\"") or "No animation packs found"
+            else
+                StatusLabel.Text = string.format("%d animation pack%s", #self.Results, #self.Results == 1 and "" or "s")
+            end
+        end
+
+        function Catalog:AppendPage(Page)
+            if type(Page) ~= "table" then return end
+            for _, Item in next, Page do
+                local ItemType = tostring(Item.ItemType or Item.itemType or "")
+                local BundleId = self:NormalizeAssetId(Item.Id or Item.id)
+                if BundleId and not self.ResultById[BundleId] and (ItemType == "" or string.find(string.lower(ItemType), "bundle", 1, true)) then
+                    local Result = {
+                        Id = BundleId,
+                        Name = tostring(Item.Name or Item.name or ("Animation Pack " .. BundleId)),
+                        BundledItems = Item.BundledItems or Item.bundledItems,
+                        CreatorName = Item.CreatorName or Item.creatorName,
+                    }
+                    self.ResultById[BundleId] = Result
+                    table.insert(self.Results, Result)
+                end
+            end
+        end
+
+        function Catalog:PerformSearch(Query, Generation)
+            if Generation ~= self.SearchGeneration then return end
+            local CacheKey = string.lower(Query)
+            local Cached = self.QueryCache[CacheKey]
+            if Cached then
+                self.Results = table.clone(Cached.Results)
+                self.ResultById = {}
+                for _, Result in next, self.Results do self.ResultById[tostring(Result.Id)] = Result end
+                self.CurrentPages = Cached.Pages
+                MoreButton.Visible = self.CurrentPages and not self.CurrentPages.IsFinished or false
+                self:RenderResults()
+                return
+            end
+            StatusLabel.Text = "Searching Roblox..."
+            local Params = CatalogSearchParams.new()
+            Params.SearchKeyword = Query ~= "" and Query or "animation"
+            Params.BundleTypes = {Enum.BundleType.Animations}
+            Params.SortType = Enum.CatalogSortType.Relevance
+            Params.Limit = self.PageSize
+            local Success, Pages = pcall(AvatarEditorService.SearchCatalogAsync, AvatarEditorService, Params)
+            if Generation ~= self.SearchGeneration then return end
+            if not Success or not Pages then
+                StatusLabel.Text = "Couldn't load the Roblox animation catalog"
+                MoreButton.Visible = false
+                return
+            end
+            self.Results = {}
+            self.ResultById = {}
+            self.CurrentPages = Pages
+            self:AppendPage(Pages:GetCurrentPage())
+            self.QueryCache[CacheKey] = {Results = table.clone(self.Results), Pages = Pages}
+            MoreButton.Visible = not Pages.IsFinished
+            self:RenderResults()
+        end
+
+        function Catalog:Search(Query)
+            Query = tostring(Query or "")
+            self.CurrentQuery = Query
+            self.SearchGeneration = self.SearchGeneration + 1
+            local Generation = self.SearchGeneration
+            task.delay(self.SearchDebounce, function()
+                if Generation == self.SearchGeneration and Overlay.Visible then
+                    task.spawn(function() self:PerformSearch(Query, Generation) end)
+                end
+            end)
+        end
+
+        function Catalog:LoadMore()
+            local Pages = self.CurrentPages
+            if not Pages or Pages.IsFinished then MoreButton.Visible = false return end
+            MoreButton.Text = "Loading..."
+            task.spawn(function()
+                local Success = pcall(Pages.AdvanceToNextPageAsync, Pages)
+                if Success then
+                    self:AppendPage(Pages:GetCurrentPage())
+                    local CacheKey = string.lower(self.CurrentQuery)
+                    self.QueryCache[CacheKey] = {Results = table.clone(self.Results), Pages = Pages}
+                    self:RenderResults()
+                else
+                    StatusLabel.Text = "Couldn't load more animation packs"
+                end
+                MoreButton.Text = "Load More"
+                MoreButton.Visible = not Pages.IsFinished
+            end)
+        end
+
+        function Catalog:Open()
+            if self.Disabled then return end
+            self:UpdateOverlayBounds()
+            self:UpdateGrid()
+            Overlay.Visible = true
+            Arrow.Text = "‹"
+            if #self.Results == 0 then self:Search(SearchBox.Text) else self:RenderResults() end
+        end
+
+        function Catalog:Close()
+            Overlay.Visible = false
+            SearchBox:ReleaseFocus()
+            Arrow.Text = "›"
+        end
+
+        function Catalog:SetDisabled(Value)
+            self.Disabled = Value == true
+            DisplayButton.AutoButtonColor = false
+            DisplayText.TextTransparency = self.Disabled and 0.5 or 0
+            Label.TextTransparency = self.Disabled and 0.5 or 0
+            if self.Disabled then self:Close() end
+        end
+
+        Library:GiveSignal(DisplayButton.MouseButton1Click:Connect(function() Catalog:Open() end))
+        Library:GiveSignal(CloseButton.MouseButton1Click:Connect(function() Catalog:Close() end))
+        Library:GiveSignal(MoreButton.MouseButton1Click:Connect(function() Catalog:LoadMore() end))
+        Library:GiveSignal(EquipButton.MouseButton1Click:Connect(function() Catalog:EquipSelected() end))
+        Library:GiveSignal(RestoreButton.MouseButton1Click:Connect(function()
+            Catalog:Restore()
+            StatusLabel.Text = "Restored original animation IDs"
+        end))
+        Library:GiveSignal(SearchBox:GetPropertyChangedSignal("Text"):Connect(function() Catalog:Search(SearchBox.Text) end))
+        Library:GiveSignal(Results:GetPropertyChangedSignal("AbsoluteSize"):Connect(function() Catalog:UpdateGrid() end))
+        if ContentFrame then
+            Library:GiveSignal(ContentFrame:GetPropertyChangedSignal("Position"):Connect(function() if Overlay.Visible then Catalog:UpdateOverlayBounds() end end))
+            Library:GiveSignal(ContentFrame:GetPropertyChangedSignal("Size"):Connect(function() if Overlay.Visible then Catalog:UpdateOverlayBounds() end end))
+        end
+        Library:OnUnload(function()
+            if Catalog.Enabled then Catalog:Restore() end
+        end)
+        Library:GiveSignal(LocalPlayer.CharacterAdded:Connect(function(Character)
+            if not Catalog.KeepOnRespawn or not Catalog.Enabled or not Catalog.EquippedPack then return end
+            local Pack = Catalog.EquippedPack
+            task.delay(0.75, function()
+                if Catalog.KeepOnRespawn and Catalog.Enabled and Catalog.EquippedPack == Pack and LocalPlayer.Character == Character then
+                    Character:WaitForChild("Humanoid", 5)
+                    Character:WaitForChild("Animate", 5)
+                    Catalog:ApplyPackData(Pack, Character, true)
+                end
+            end)
+        end))
+        if Groupbox.Tab and Groupbox.SubPage and type(Groupbox.Tab.SubPages) == "table" then
+            for _, SubPage in next, Groupbox.Tab.SubPages do
+                if SubPage ~= Groupbox.SubPage and SubPage.Button then
+                    Library:GiveSignal(SubPage.Button.MouseButton1Click:Connect(function() Catalog:Close() end))
+                end
+            end
+        end
+
+        Catalog.Holder = Holder
+        Catalog.Overlay = Overlay
+        Catalog.SearchBox = SearchBox
+        Catalog.ResultsFrame = Results
+        Catalog.Default = Info.Default
+        table.insert(Groupbox.Elements, Catalog)
+        Options[Idx] = Catalog
+        Groupbox:Resize()
+        Library:BindDisabledState(Catalog, Info.Disabled)
+        Catalog:Display()
+        return Catalog
+    end
+
     BaseGroupbox.__index = Funcs
     BaseGroupbox.__namecall = function(_, Key, ...)
         return Funcs[Key](...)
@@ -12058,7 +12919,7 @@ function Library:LoadSettingsTab(Window, SettingsInfo)
                             task.wait(math.max(0, Interval - 10))
                             if Library.Unloaded or Generation ~= AutoSaveGeneration or not (Toggles.SaveManager_AutoSave and Toggles.SaveManager_AutoSave.Value) then break end
                             local WarningConfig = Options.SaveManager_ConfigList and Options.SaveManager_ConfigList.Value
-                            if WarningConfig and not (Toggles.SaveManager_DisableAutoSaveNotifications and Toggles.SaveManager_DisableAutoSaveNotifications.Value) then
+                            if WarningConfig then
                                 Library:Notify({
                                     Title = "Auto Save",
                                     Description = string.format("Saving config %q in 10 seconds.", WarningConfig),
@@ -12071,24 +12932,22 @@ function Library:LoadSettingsTab(Window, SettingsInfo)
                             local ConfigName = Options.SaveManager_ConfigList and Options.SaveManager_ConfigList.Value
                             if ConfigName then
                                 local Success, Error = SaveManager:Save(ConfigName)
-                                if not (Toggles.SaveManager_DisableAutoSaveNotifications and Toggles.SaveManager_DisableAutoSaveNotifications.Value) then
-                                    if Success then
-                                        Library:Notify({
-                                            Title = "Auto Save",
-                                            Description = string.format("Saved config %q.", ConfigName),
-                                            Time = 3,
-                                            Icon = "circle-check",
-                                        })
-                                    else
-                                        Library:Notify({
-                                            Title = "Auto Save Error",
-                                            Description = "Failed to save config: " .. tostring(Error) .. ".",
-                                            Time = 3,
-                                            Icon = "circle-x",
-                                        })
-                                    end
+                                if Success then
+                                    Library:Notify({
+                                        Title = "Auto Save",
+                                        Description = string.format("Saved config %q.", ConfigName),
+                                        Time = 3,
+                                        Icon = "circle-check",
+                                    })
+                                else
+                                    Library:Notify({
+                                        Title = "Auto Save Error",
+                                        Description = "Failed to save config: " .. tostring(Error) .. ".",
+                                        Time = 3,
+                                        Icon = "circle-x",
+                                    })
                                 end
-                            elseif not (Toggles.SaveManager_DisableAutoSaveNotifications and Toggles.SaveManager_DisableAutoSaveNotifications.Value) then
+                            else
                                 Library:Notify({
                                     Title = "Auto Save",
                                     Description = "No config selected. Auto save was skipped.",
@@ -12119,10 +12978,6 @@ function Library:LoadSettingsTab(Window, SettingsInfo)
                     Callback = function()
                         if Toggles.SaveManager_AutoSave and Toggles.SaveManager_AutoSave.Value then RestartAutoSave() end
                     end,
-                })
-                AutoSaveSettings:AddToggle("SaveManager_DisableAutoSaveNotifications", {
-                    Text = "Disable Notifications",
-                    Default = false,
                 })
                 AutoSaveSettings:SetupDependencies({
                     { AutoSaveToggle, true },
