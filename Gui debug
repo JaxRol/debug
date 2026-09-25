@@ -6615,6 +6615,7 @@ do
             PackLoading = {},
             ProductInfoCache = {},
             AnimationIdsCache = {},
+            AssetResolveBusy = false,
             CurrentPages = nil,
             CurrentQuery = "",
             CurrentCharacter = nil,
@@ -6647,6 +6648,7 @@ do
             FullPreviewCharacter = nil,
             FullPreviewTrack = nil,
             FullPreviewAnimation = nil,
+            FullPreviewLoadedTracks = {},
             FullPreviewTitle = nil,
             FullPreviewStatus = nil,
             FullPreviewResult = nil,
@@ -6955,6 +6957,15 @@ do
                 return self.AnimationIdsCache[CatalogId] or nil
             end
 
+            while self.AssetResolveBusy do
+                task.wait()
+                if self.AnimationIdsCache[CatalogId] ~= nil then
+                    return self.AnimationIdsCache[CatalogId] or nil
+                end
+            end
+
+            self.AssetResolveBusy = true
+
             local ResolvedIds = {}
             local SeenIds = {}
 
@@ -7026,10 +7037,12 @@ do
 
             if #ResolvedIds == 0 then
                 self.AnimationIdsCache[CatalogId] = false
+                self.AssetResolveBusy = false
                 return nil
             end
 
             self.AnimationIdsCache[CatalogId] = ResolvedIds
+            self.AssetResolveBusy = false
             return ResolvedIds
         end
 
@@ -7350,6 +7363,13 @@ do
             self.PreviewTrack = nil
             self.PreviewAnimation = nil
             self.PreviewCard = nil
+
+            if self.PreviewModel and self.PreviewModel.Parent then
+                pcall(self.PreviewModel.Destroy, self.PreviewModel)
+            end
+            self.PreviewModel = nil
+            self.PreviewAnimator = nil
+
             if self.PreviewViewport and self.PreviewViewport.Parent then
                 if DestroyViewport then
                     self.PreviewViewport:Destroy()
@@ -7586,16 +7606,26 @@ do
             end)
         end
 
-        function Catalog:StopFullPreviewTrack()
+        function Catalog:StopFullPreviewTrack(DestroyAll)
             if self.FullPreviewTrack then
                 pcall(self.FullPreviewTrack.Stop, self.FullPreviewTrack, 0.08)
-                pcall(self.FullPreviewTrack.Destroy, self.FullPreviewTrack)
             end
-            if self.FullPreviewAnimation and self.FullPreviewAnimation.Parent then
-                pcall(self.FullPreviewAnimation.Destroy, self.FullPreviewAnimation)
-            end
+
             self.FullPreviewTrack = nil
             self.FullPreviewAnimation = nil
+
+            if not DestroyAll then return end
+
+            for AnimationId, Entry in next, self.FullPreviewLoadedTracks do
+                if Entry.Track then
+                    pcall(Entry.Track.Stop, Entry.Track, 0)
+                    pcall(Entry.Track.Destroy, Entry.Track)
+                end
+                if Entry.Animation and Entry.Animation.Parent then
+                    pcall(Entry.Animation.Destroy, Entry.Animation)
+                end
+                self.FullPreviewLoadedTracks[AnimationId] = nil
+            end
         end
 
         function Catalog:UpdateFullPreviewCamera()
@@ -7841,7 +7871,7 @@ do
             self.FullPreviewGeneration += 1
             local Generation = self.FullPreviewGeneration
             local BundleId = self:NormalizeAssetId(Result and (Result.Id or Result.id))
-            self:StopFullPreviewTrack()
+            self:StopFullPreviewTrack(true)
 
             local Sequence = {}
             local SeenIds = {}
@@ -7868,28 +7898,49 @@ do
 
             local function PlayPreview(Preview)
                 if not IsCurrent() or not Preview or not Preview.Id then return false end
-                self:StopFullPreviewTrack()
 
-                local Animation = Instance.new("Animation")
-                Animation.AnimationId = "rbxassetid://" .. tostring(Preview.Id)
-                Animation.Parent = self.FullPreviewViewport
-                self.FullPreviewAnimation = Animation
+                self:StopFullPreviewTrack(false)
 
+                local AnimationId = tostring(Preview.Id)
+                local Cached = self.FullPreviewLoadedTracks[AnimationId]
+                local Animation
                 local Track
-                local Loaded = pcall(function()
-                    Track = self.FullPreviewAnimator:LoadAnimation(Animation)
-                end)
 
-                if not Loaded or not Track or not IsCurrent() then
-                    if Track then pcall(Track.Destroy, Track) end
-                    if Animation.Parent then pcall(Animation.Destroy, Animation) end
-                    if self.FullPreviewAnimation == Animation then self.FullPreviewAnimation = nil end
-                    return false
+                if Cached then
+                    Animation = Cached.Animation
+                    Track = Cached.Track
+                else
+                    Animation = Instance.new("Animation")
+                    Animation.AnimationId = "rbxassetid://" .. AnimationId
+                    Animation.Parent = self.FullPreviewViewport
+
+                    local Loaded = pcall(function()
+                        Track = self.FullPreviewAnimator:LoadAnimation(Animation)
+                    end)
+
+                    if not Loaded or not Track or not IsCurrent() then
+                        if Track then pcall(Track.Destroy, Track) end
+                        if Animation.Parent then pcall(Animation.Destroy, Animation) end
+                        return false
+                    end
+
+                    Track.Looped = true
+                    Track.Priority = Enum.AnimationPriority.Action
+
+                    Cached = {
+                        Animation = Animation,
+                        Track = Track,
+                    }
+                    self.FullPreviewLoadedTracks[AnimationId] = Cached
                 end
 
+                if not Track then return false end
+
+                self.FullPreviewAnimation = Animation
                 self.FullPreviewTrack = Track
-                Track.Looped = true
-                Track.Priority = Enum.AnimationPriority.Action
+                pcall(function()
+                    Track.TimePosition = 0
+                end)
                 Track:Play(0.05, 1, 1)
                 return true
             end
@@ -8038,7 +8089,7 @@ do
             self.FullPreviewDragInput = nil
             self.FullPreviewLastPosition = nil
             self.FullPreviewResult = nil
-            self:StopFullPreviewTrack()
+            self:StopFullPreviewTrack(true)
 
             if Destroy then
                 if self.FullPreviewOverlay and self.FullPreviewOverlay.Parent then
@@ -8053,8 +8104,20 @@ do
                 self.FullPreviewCharacter = nil
                 self.FullPreviewTitle = nil
                 self.FullPreviewStatus = nil
+                table.clear(self.FullPreviewLoadedTracks)
             elseif self.FullPreviewOverlay and self.FullPreviewOverlay.Parent then
                 self.FullPreviewOverlay.Visible = false
+
+                if self.FullPreviewModel and self.FullPreviewModel.Parent then
+                    pcall(self.FullPreviewModel.Destroy, self.FullPreviewModel)
+                end
+                self.FullPreviewModel = nil
+                self.FullPreviewAnimator = nil
+                self.FullPreviewCharacter = nil
+
+                if self.FullPreviewWorld then
+                    pcall(self.FullPreviewWorld.ClearAllChildren, self.FullPreviewWorld)
+                end
             end
         end
 
