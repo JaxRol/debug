@@ -6582,6 +6582,7 @@ do
         local Container = Groupbox.Container
         local AvatarEditorService = cloneref(game:GetService("AvatarEditorService"))
         local AssetService = cloneref(game:GetService("AssetService"))
+        local InsertService = cloneref(game:GetService("InsertService"))
         local MarketplaceService = cloneref(game:GetService("MarketplaceService"))
         local PlayersService = cloneref(game:GetService("Players"))
         local LocalPlayer = PlayersService.LocalPlayer
@@ -6949,55 +6950,86 @@ do
         function Catalog:ResolveAnimationIds(CatalogId, ObjectsFirst)
             CatalogId = self:NormalizeAssetId(CatalogId)
             if not CatalogId then return nil end
-            if self.AnimationIdsCache[CatalogId] then
+
+            if self.AnimationIdsCache[CatalogId] ~= nil then
                 return self.AnimationIdsCache[CatalogId] or nil
             end
-            local ProductInfo = not ObjectsFirst and self:GetMarketplaceInfo(CatalogId, Enum.InfoType.Asset)
-            local AssetTypeId = ProductInfo and tonumber(ProductInfo.AssetTypeId)
-            if AssetTypeId == Enum.AssetType.Animation.Value then
-                local DirectIds = {CatalogId}
-                self.AnimationIdsCache[CatalogId] = DirectIds
-                return DirectIds
-            end
-            local Success, Objects = pcall(game.GetObjects, game, "rbxassetid://" .. CatalogId)
+
             local ResolvedIds = {}
             local SeenIds = {}
-            if Success and type(Objects) == "table" then
+
+            local function AddAnimation(Animation)
+                if not Animation or not Animation:IsA("Animation") then return end
+                local ResolvedId = self:NormalizeAssetId(Animation.AnimationId)
+
+                -- Catalog animation items are wrapper assets. Their catalog ID is not
+                -- necessarily a playable AnimationClip ID, so never return it as fallback.
+                if not ResolvedId or ResolvedId == CatalogId or SeenIds[ResolvedId] then return end
+
+                SeenIds[ResolvedId] = true
+                table.insert(ResolvedIds, ResolvedId)
+            end
+
+            local function ScanObject(Object)
+                if not Object then return end
+
+                AddAnimation(Object)
+
+                local Success, Descendants = pcall(Object.GetDescendants, Object)
+                if Success and type(Descendants) == "table" then
+                    for _, Descendant in next, Descendants do
+                        if Descendant:IsA("Animation") then AddAnimation(Descendant) end
+                    end
+                end
+            end
+
+            local function DestroyObjects(Objects)
+                if type(Objects) ~= "table" then return end
                 for _, Object in next, Objects do
-                    local Animations = {}
-                    if Object:IsA("Animation") then
-                        table.insert(Animations, Object)
-                    elseif Object.QueryDescendants then
-                        local QuerySuccess, QueryResult = pcall(function()
-                            return Object:QueryDescendants("Animation")
-                        end)
-                        if QuerySuccess and type(QueryResult) == "table" then
-                            Animations = QueryResult
-                        end
-                    end
-                    if #Animations == 0 then
-                        local FirstAnimation = Object:FindFirstChildWhichIsA("Animation", true)
-                        if FirstAnimation then table.insert(Animations, FirstAnimation) end
-                    end
-                    for _, Animation in next, Animations do
-                        local ResolvedId = self:NormalizeAssetId(Animation.AnimationId)
-                        if ResolvedId and not SeenIds[ResolvedId] then
-                            SeenIds[ResolvedId] = true
-                            table.insert(ResolvedIds, ResolvedId)
-                        end
-                    end
-                    pcall(Object.Destroy, Object)
+                    if typeof(Object) == "Instance" then pcall(Object.Destroy, Object) end
                 end
             end
+
+            local function TryGetObjects(Source)
+                local Success, Objects = pcall(game.GetObjects, game, Source)
+                if not Success or type(Objects) ~= "table" then return false end
+
+                for _, Object in next, Objects do
+                    if typeof(Object) == "Instance" then ScanObject(Object) end
+                end
+
+                DestroyObjects(Objects)
+                return #ResolvedIds > 0
+            end
+
+            -- The catalog asset URL returns the R15Anim wrapper for avatar animations.
+            -- This is intentionally attempted before rbxassetid://, which can resolve
+            -- differently for catalog animation products.
+            TryGetObjects("http://www.roblox.com/Asset/?id=" .. CatalogId)
+
             if #ResolvedIds == 0 then
-                if ObjectsFirst then
-                    ProductInfo = self:GetMarketplaceInfo(CatalogId, Enum.InfoType.Asset)
-                    if ProductInfo and tonumber(ProductInfo.AssetTypeId) == Enum.AssetType.Animation.Value then
-                        ResolvedIds = {CatalogId}
-                    end
-                end
-                if #ResolvedIds == 0 then return nil end
+                TryGetObjects("https://www.roblox.com/asset/?id=" .. CatalogId)
             end
+
+            if #ResolvedIds == 0 then
+                TryGetObjects("rbxassetid://" .. CatalogId)
+            end
+
+            -- LoadAsset is normally server-restricted, but some executor environments
+            -- expose it. Keep it as a pcall fallback without depending on it.
+            if #ResolvedIds == 0 and InsertService then
+                local Success, Model = pcall(InsertService.LoadAsset, InsertService, tonumber(CatalogId))
+                if Success and typeof(Model) == "Instance" then
+                    ScanObject(Model)
+                    pcall(Model.Destroy, Model)
+                end
+            end
+
+            if #ResolvedIds == 0 then
+                self.AnimationIdsCache[CatalogId] = false
+                return nil
+            end
+
             self.AnimationIdsCache[CatalogId] = ResolvedIds
             return ResolvedIds
         end
@@ -7263,7 +7295,7 @@ do
                 local Original = self.OriginalSlots[SlotKey]
                 local Animation = Original and Original.Animation
                 if Animation and Animation.Parent then
-                    local AnimationId = Pack[SlotKey]
+                    local AnimationId = self:NormalizeAssetId(Pack[SlotKey])
                     Animation.AnimationId = AnimationId and ("rbxassetid://" .. AnimationId) or Original.AnimationId
                 end
             end
