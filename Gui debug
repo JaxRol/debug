@@ -6621,30 +6621,44 @@ do
             OriginalSlots = {},
             Cards = {},
             PreviewGeneration = 0,
-            PreviewOverlay = nil,
             PreviewViewport = nil,
             PreviewWorld = nil,
             PreviewCamera = nil,
             PreviewLabel = nil,
-            PreviewTitle = nil,
             PreviewAnimator = nil,
+            PreviewCard = nil,
             PreviewTrack = nil,
             PreviewAnimation = nil,
             PreviewModel = nil,
-            PreviewResult = nil,
             PreviewCache = {},
-            PreviewYaw = 0,
-            PreviewPitch = 0,
-            PreviewDistance = 8,
-            PreviewMinDistance = 3,
-            PreviewMaxDistance = 18,
-            PreviewDragging = false,
-            PreviewDragInput = nil,
-            PreviewLastPosition = nil,
+            PreviewLastTap = 0,
+            PreviewLastTapResult = nil,
+            PreviewDoubleTapWindow = math.max(tonumber(Info.PreviewDoubleTapWindow) or 0.34, 0.2),
+            FullPreviewOpen = false,
+            FullPreviewGeneration = 0,
+            FullPreviewOverlay = nil,
+            FullPreviewTitle = nil,
+            FullPreviewHint = nil,
+            FullPreviewBackButton = nil,
+            FullPreviewTrack = nil,
+            FullPreviewAnimation = nil,
+            FullPreviewResult = nil,
+            FullPreviewCard = nil,
+            FullPreviewSequenceCache = {},
+            FullPreviewCycleTime = math.max(tonumber(Info.FullPreviewCycleTime) or 2.25, 0.5),
+            FullPreviewDragging = false,
+            FullPreviewDragInput = nil,
+            FullPreviewLastPosition = nil,
+            FullPreviewYaw = 0,
+            FullPreviewPitch = 0,
+            FullPreviewDistance = 8,
+            FullPreviewMinDistance = 3,
+            FullPreviewMaxDistance = 18,
+            FullPreviewCenter = Vector3.zero,
+            FullPreviewOriginalCameraCFrame = nil,
             BundleItemsCache = {},
             BundleItemsLoading = {},
             PreviewDelay = math.max(tonumber(Info.PreviewDelay) or 0.03, 0),
-            PreviewCycleTime = math.max(tonumber(Info.PreviewCycleTime) or 2.25, 0.5),
             PreviewSlots = {"Idle", "Walk", "Run", "Jump", "Fall", "Climb", "Swim", "SwimIdle"},
             SlotOrder = {"Idle1", "Idle2", "Walk", "Run", "Jump", "Fall", "Climb", "Swim", "SwimIdle"},
             SlotPaths = {
@@ -7066,13 +7080,10 @@ do
                 task.spawn(function()
                     local Resolved
                     pcall(function()
-                        local AnimationType = self:GetAnimationType(Entry.Item, nil)
-                        if not AnimationType then
-                            local ProductInfo = self:GetMarketplaceInfo(Entry.Id, Enum.InfoType.Asset)
-                            AnimationType = self:GetAnimationType(Entry.Item, ProductInfo)
-                        end
+                        local ProductInfo = self:GetMarketplaceInfo(Entry.Id, Enum.InfoType.Asset)
+                        local AnimationType = self:GetAnimationType(Entry.Item, ProductInfo)
                         if AnimationType then
-                            local Ids = self:ResolveAnimationIds(Entry.Id, true)
+                            local Ids = self:ResolveAnimationIds(Entry.Id)
                             if Ids then Resolved = {Type = AnimationType, Ids = Ids} end
                         end
                     end)
@@ -7223,29 +7234,55 @@ do
 
         function Catalog:StopPreview(DestroyViewport)
             self.PreviewGeneration += 1
-            self.PreviewDragging = false
-            self.PreviewDragInput = nil
-            self.PreviewLastPosition = nil
+            self.FullPreviewGeneration += 1
+            self.FullPreviewOpen = false
+            self.FullPreviewDragging = false
+            self.FullPreviewDragInput = nil
+            self.FullPreviewLastPosition = nil
+            if self.FullPreviewTrack then
+                pcall(self.FullPreviewTrack.Stop, self.FullPreviewTrack, 0.08)
+                pcall(self.FullPreviewTrack.Destroy, self.FullPreviewTrack)
+            end
+            if self.FullPreviewAnimation and self.FullPreviewAnimation.Parent then pcall(self.FullPreviewAnimation.Destroy, self.FullPreviewAnimation) end
+            self.FullPreviewTrack = nil
+            self.FullPreviewAnimation = nil
+            self.FullPreviewResult = nil
+            self.FullPreviewCard = nil
+            if self.FullPreviewOverlay and self.FullPreviewOverlay.Parent then self.FullPreviewOverlay.Visible = false end
             if self.PreviewTrack then
-                pcall(self.PreviewTrack.Stop, self.PreviewTrack, 0.08)
+                pcall(self.PreviewTrack.Stop, self.PreviewTrack, 0)
                 pcall(self.PreviewTrack.Destroy, self.PreviewTrack)
             end
             if self.PreviewAnimation and self.PreviewAnimation.Parent then pcall(self.PreviewAnimation.Destroy, self.PreviewAnimation) end
+            if self.PreviewCard and self.PreviewCard.Image and self.PreviewCard.Image.Parent then self.PreviewCard.Image.Visible = true end
             self.PreviewTrack = nil
             self.PreviewAnimation = nil
-            self.PreviewResult = nil
-            if DestroyViewport then
-                if self.PreviewOverlay and self.PreviewOverlay.Parent then self.PreviewOverlay:Destroy() end
-                self.PreviewOverlay = nil
+            self.PreviewCard = nil
+            if self.PreviewViewport and self.PreviewViewport.Parent then
+                if DestroyViewport then
+                    self.PreviewViewport:Destroy()
+                    self.PreviewViewport = nil
+                    self.PreviewWorld = nil
+                    self.PreviewCamera = nil
+                    self.PreviewLabel = nil
+                    self.PreviewAnimator = nil
+                    self.PreviewModel = nil
+                    if self.FullPreviewOverlay and self.FullPreviewOverlay.Parent then self.FullPreviewOverlay:Destroy() end
+                    self.FullPreviewOverlay = nil
+                    self.FullPreviewTitle = nil
+                    self.FullPreviewHint = nil
+                    self.FullPreviewBackButton = nil
+                else
+                    self.PreviewViewport.Visible = false
+                    self.PreviewViewport.Parent = Overlay
+                end
+            elseif DestroyViewport then
                 self.PreviewViewport = nil
                 self.PreviewWorld = nil
                 self.PreviewCamera = nil
                 self.PreviewLabel = nil
-                self.PreviewTitle = nil
                 self.PreviewAnimator = nil
                 self.PreviewModel = nil
-            elseif self.PreviewOverlay and self.PreviewOverlay.Parent then
-                self.PreviewOverlay.Visible = false
             end
         end
 
@@ -7287,31 +7324,8 @@ do
             return Clone, Humanoid, Animator
         end
 
-        function Catalog:UpdatePreviewCamera()
-            local Camera = self.PreviewCamera
-            if not Camera then return end
-            local Pitch = math.clamp(self.PreviewPitch or 0, math.rad(-75), math.rad(75))
-            local Yaw = self.PreviewYaw or 0
-            local Distance = math.clamp(self.PreviewDistance or 8, self.PreviewMinDistance or 3, self.PreviewMaxDistance or 18)
-            local Center = self.PreviewCenter or Vector3.zero
-            local CosPitch = math.cos(Pitch)
-            local Offset = Vector3.new(math.sin(Yaw) * CosPitch, math.sin(Pitch), -math.cos(Yaw) * CosPitch) * Distance
-            Camera.CFrame = CFrame.lookAt(Center + Offset, Center)
-        end
-
-        function Catalog:EnsurePreviewViewport()
-            if not self.PreviewOverlay or not self.PreviewOverlay.Parent then
-                local PreviewOverlay = New("Frame", {
-                    Active = true,
-                    BackgroundColor3 = "BackgroundColor",
-                    BorderSizePixel = 0,
-                    Position = UDim2.fromScale(0, 0),
-                    Size = UDim2.fromScale(1, 1),
-                    Visible = false,
-                    ZIndex = 70,
-                    Parent = Overlay,
-                })
-                New("UICorner", {CornerRadius = UDim.new(0, Library.CornerRadius), Parent = PreviewOverlay})
+        function Catalog:EnsurePreviewViewport(Card)
+            if not self.PreviewViewport or not self.PreviewViewport.Parent then
                 local Viewport = New("ViewportFrame", {
                     Active = true,
                     Ambient = Color3.fromRGB(190, 190, 190),
@@ -7319,121 +7333,92 @@ do
                     BorderSizePixel = 0,
                     LightColor = Color3.fromRGB(255, 255, 255),
                     LightDirection = Vector3.new(-1, -1, -1),
-                    Position = UDim2.fromScale(0, 0),
-                    Size = UDim2.fromScale(1, 1),
-                    ZIndex = 71,
-                    Parent = PreviewOverlay,
+                    Position = UDim2.fromOffset(7, 7),
+                    Size = UDim2.new(1, -14, 1, -48),
+                    Visible = false,
+                    ZIndex = 63,
+                    Parent = Overlay,
                 })
-                New("UICorner", {CornerRadius = UDim.new(0, Library.CornerRadius), Parent = Viewport})
+                New("UICorner", {CornerRadius = UDim.new(0, math.max(Library.CornerRadius - 1, 0)), Parent = Viewport})
                 local World = Instance.new("WorldModel")
                 World.Parent = Viewport
                 local Camera = Instance.new("Camera")
                 Camera.FieldOfView = 32
                 Camera.Parent = Viewport
                 Viewport.CurrentCamera = Camera
-                local BackButton = New("TextButton", {
-                    BackgroundColor3 = "MainColor",
-                    BackgroundTransparency = 0.08,
-                    Position = UDim2.fromOffset(8, 8),
-                    Size = UDim2.fromOffset(74, 32),
-                    Text = "‹ Back",
-                    TextSize = 12,
-                    ZIndex = 74,
-                    Parent = PreviewOverlay,
-                })
-                Library:AddOutline(BackButton)
-                New("UICorner", {CornerRadius = UDim.new(0, Library.CornerRadius), Parent = BackButton})
-                local PreviewTitle = New("TextLabel", {
-                    BackgroundColor3 = "MainColor",
-                    BackgroundTransparency = 0.12,
-                    AnchorPoint = Vector2.new(0.5, 0),
-                    Position = UDim2.new(0.5, 0, 0, 8),
-                    Size = UDim2.new(1, -188, 0, 32),
-                    Text = "Animation Preview",
-                    TextSize = 13,
-                    TextTruncate = Enum.TextTruncate.AtEnd,
-                    ZIndex = 73,
-                    Parent = PreviewOverlay,
-                })
-                New("UICorner", {CornerRadius = UDim.new(0, Library.CornerRadius), Parent = PreviewTitle})
-                local PreviewEquipButton = New("TextButton", {
-                    BackgroundColor3 = "AccentColor",
-                    BackgroundTransparency = 0.05,
-                    AnchorPoint = Vector2.new(1, 0),
-                    Position = UDim2.new(1, -8, 0, 8),
-                    Size = UDim2.fromOffset(90, 32),
-                    Text = "Equip",
-                    TextSize = 12,
-                    ZIndex = 74,
-                    Parent = PreviewOverlay,
-                })
-                Library:AddOutline(PreviewEquipButton)
-                New("UICorner", {CornerRadius = UDim.new(0, Library.CornerRadius), Parent = PreviewEquipButton})
                 local PreviewLabel = New("TextLabel", {
                     BackgroundColor3 = "MainColor",
-                    BackgroundTransparency = 0.12,
+                    BackgroundTransparency = 0.15,
                     AnchorPoint = Vector2.new(0.5, 1),
-                    Position = UDim2.new(0.5, 0, 1, -8),
-                    Size = UDim2.new(1, -16, 0, 28),
+                    Position = UDim2.new(0.5, 0, 1, -5),
+                    Size = UDim2.new(1, -10, 0, 20),
                     Text = "Loading preview...",
-                    TextSize = 11,
+                    TextSize = 10,
                     TextTruncate = Enum.TextTruncate.AtEnd,
-                    ZIndex = 73,
-                    Parent = PreviewOverlay,
+                    ZIndex = 66,
+                    Parent = Viewport,
                 })
-                New("UICorner", {CornerRadius = UDim.new(0, Library.CornerRadius), Parent = PreviewLabel})
-
-                self.PreviewOverlay = PreviewOverlay
+                New("UICorner", {CornerRadius = UDim.new(0, math.max(Library.CornerRadius - 2, 0)), Parent = PreviewLabel})
                 self.PreviewViewport = Viewport
                 self.PreviewWorld = World
                 self.PreviewCamera = Camera
                 self.PreviewLabel = PreviewLabel
-                self.PreviewTitle = PreviewTitle
 
-                Library:GiveSignal(BackButton.MouseButton1Click:Connect(function()
-                    if self.PreviewOverlay == PreviewOverlay then self:StopPreview() end
-                end))
-                Library:GiveSignal(PreviewEquipButton.MouseButton1Click:Connect(function()
-                    if self.PreviewOverlay == PreviewOverlay then self:EquipSelected() end
-                end))
                 Library:GiveSignal(Viewport.InputBegan:Connect(function(Input)
-                    if self.PreviewOverlay ~= PreviewOverlay or not PreviewOverlay.Visible then return end
-                    if Input.UserInputType == Enum.UserInputType.MouseButton1 or Input.UserInputType == Enum.UserInputType.Touch then
-                        self.PreviewDragging = true
-                        self.PreviewDragInput = Input
-                        self.PreviewLastPosition = Vector2.new(Input.Position.X, Input.Position.Y)
-                    end
-                end))
-                Library:GiveSignal(UserInputService.InputChanged:Connect(function(Input)
-                    if self.PreviewOverlay ~= PreviewOverlay or not PreviewOverlay.Visible then return end
-                    if Input.UserInputType == Enum.UserInputType.MouseWheel then
-                        self.PreviewDistance = math.clamp((self.PreviewDistance or 8) - Input.Position.Z * 0.8, self.PreviewMinDistance or 3, self.PreviewMaxDistance or 18)
-                        self:UpdatePreviewCamera()
+                    if Input.UserInputType ~= Enum.UserInputType.MouseButton1 and Input.UserInputType ~= Enum.UserInputType.Touch then return end
+                    if self.FullPreviewOpen then
+                        self.FullPreviewDragging = true
+                        self.FullPreviewDragInput = Input
+                        self.FullPreviewLastPosition = Vector2.new(Input.Position.X, Input.Position.Y)
                         return
                     end
-                    if not self.PreviewDragging or not self.PreviewLastPosition then return end
-                    if self.PreviewDragInput and self.PreviewDragInput.UserInputType == Enum.UserInputType.Touch then
-                        if Input ~= self.PreviewDragInput then return end
+                    if self.PreviewViewport ~= Viewport or not Viewport.Visible or not self.SelectedResult then return end
+                    local Now = os.clock()
+                    local IsDoubleTap = self.PreviewLastTapResult == self.SelectedResult and Now - self.PreviewLastTap <= self.PreviewDoubleTapWindow
+                    self.PreviewLastTap = Now
+                    self.PreviewLastTapResult = self.SelectedResult
+                    if IsDoubleTap then
+                        self.PreviewLastTap = 0
+                        self.PreviewLastTapResult = nil
+                        self:OpenFullPreview(self.SelectedResult)
+                    end
+                end))
+
+                Library:GiveSignal(UserInputService.InputChanged:Connect(function(Input)
+                    if not self.FullPreviewOpen or self.PreviewViewport ~= Viewport then return end
+                    if Input.UserInputType == Enum.UserInputType.MouseWheel then
+                        self.FullPreviewDistance = math.clamp(self.FullPreviewDistance - Input.Position.Z * 0.8, self.FullPreviewMinDistance, self.FullPreviewMaxDistance)
+                        self:UpdateFullPreviewCamera()
+                        return
+                    end
+                    if not self.FullPreviewDragging or not self.FullPreviewLastPosition then return end
+                    if self.FullPreviewDragInput and self.FullPreviewDragInput.UserInputType == Enum.UserInputType.Touch then
+                        if Input ~= self.FullPreviewDragInput then return end
                     elseif Input.UserInputType ~= Enum.UserInputType.MouseMovement then
                         return
                     end
                     local Position = Vector2.new(Input.Position.X, Input.Position.Y)
-                    local Delta = Position - self.PreviewLastPosition
-                    self.PreviewLastPosition = Position
-                    self.PreviewYaw = (self.PreviewYaw or 0) - Delta.X * 0.012
-                    self.PreviewPitch = math.clamp((self.PreviewPitch or 0) - Delta.Y * 0.008, math.rad(-75), math.rad(75))
-                    self:UpdatePreviewCamera()
+                    local Delta = Position - self.FullPreviewLastPosition
+                    self.FullPreviewLastPosition = Position
+                    self.FullPreviewYaw -= Delta.X * 0.012
+                    self.FullPreviewPitch = math.clamp(self.FullPreviewPitch - Delta.Y * 0.008, math.rad(-75), math.rad(75))
+                    self:UpdateFullPreviewCamera()
                 end))
+
                 Library:GiveSignal(UserInputService.InputEnded:Connect(function(Input)
-                    if not self.PreviewDragging then return end
-                    if Input == self.PreviewDragInput or Input.UserInputType == Enum.UserInputType.MouseButton1 then
-                        self.PreviewDragging = false
-                        self.PreviewDragInput = nil
-                        self.PreviewLastPosition = nil
+                    if not self.FullPreviewDragging then return end
+                    if Input == self.FullPreviewDragInput or Input.UserInputType == Enum.UserInputType.MouseButton1 then
+                        self.FullPreviewDragging = false
+                        self.FullPreviewDragInput = nil
+                        self.FullPreviewLastPosition = nil
                     end
                 end))
             end
-
+            local Viewport = self.PreviewViewport
+            Viewport.Parent = Card.Frame
+            Viewport.Visible = true
+            self.PreviewCard = Card
+            if Card.Image and Card.Image.Parent then Card.Image.Visible = false end
             if not self.PreviewModel or not self.PreviewModel.Parent or not self.PreviewAnimator or not self.PreviewAnimator.Parent then
                 if self.PreviewModel and self.PreviewModel.Parent then self.PreviewModel:Destroy() end
                 local Clone, Humanoid, Animator, RigError = self:CreatePreviewRig(self.PreviewWorld)
@@ -7441,47 +7426,50 @@ do
                 self.PreviewModel = Clone
                 self.PreviewAnimator = Animator
                 local BoxCFrame, BoxSize = Clone:GetBoundingBox()
-                self.PreviewCenter = BoxCFrame.Position + Vector3.new(0, BoxSize.Y * 0.04, 0)
+                local Center = BoxCFrame.Position + Vector3.new(0, BoxSize.Y * 0.05, 0)
                 local Distance = math.max(BoxSize.X, BoxSize.Y, BoxSize.Z) * 1.55
-                self.PreviewDistance = Distance
-                self.PreviewMinDistance = math.max(Distance * 0.55, 2.5)
-                self.PreviewMaxDistance = math.max(Distance * 2.6, self.PreviewMinDistance + 1)
-                self.PreviewYaw = 0
-                self.PreviewPitch = 0
-                self:UpdatePreviewCamera()
+                self.PreviewCamera.CFrame = CFrame.lookAt(Center + Vector3.new(Distance * 0.08, BoxSize.Y * 0.03, -Distance), Center)
             end
             return self.PreviewAnimator
         end
 
-        function Catalog:ResolvePreviewAnimations(Result)
+        function Catalog:ResolvePreviewAnimation(Result)
             local BundleId = self:NormalizeAssetId(Result and (Result.Id or Result.id))
             if not BundleId then return nil, "Invalid animation pack ID" end
-            if self.PreviewCache[BundleId] then return self.PreviewCache[BundleId] end
-            local Pack, ResolveError = self:ResolvePack(Result)
-            if not Pack then return nil, ResolveError or "Animation pack details could not be loaded" end
-            local Order = {
-                {"Idle1", "Idle 1"},
-                {"Idle2", "Idle 2"},
-                {"Walk", "Walk"},
-                {"Run", "Run"},
-                {"Jump", "Jump"},
-                {"Fall", "Fall"},
-                {"Climb", "Climb"},
-                {"Swim", "Swim"},
-                {"SwimIdle", "Swim Idle"},
-            }
-            local Previews = {}
-            local SeenIds = {}
-            for _, Entry in next, Order do
-                local AnimationId = self:NormalizeAssetId(Pack[Entry[1]])
-                if AnimationId and not SeenIds[AnimationId] then
-                    SeenIds[AnimationId] = true
-                    table.insert(Previews, {Id = AnimationId, Type = Entry[2], Slot = Entry[1]})
+            if self.PreviewCache[BundleId] then return self.PreviewCache[BundleId] or nil end
+            local Pack = self.PackCache[BundleId]
+            if Pack then
+                local PackPriority = {{"Idle1", "Idle"}, {"Walk", "Walk"}, {"Run", "Run"}, {"Jump", "Jump"}, {"Fall", "Fall"}, {"Climb", "Climb"}, {"Swim", "Swim"}, {"SwimIdle", "SwimIdle"}}
+                for _, Entry in next, PackPriority do
+                    if Pack[Entry[1]] then
+                        local Preview = {Id = Pack[Entry[1]], Type = Entry[2]}
+                        self.PreviewCache[BundleId] = Preview
+                        return Preview
+                    end
                 end
             end
-            if #Previews == 0 then return nil, "No previewable animations were found" end
-            self.PreviewCache[BundleId] = Previews
-            return Previews
+            local Items = self:GetBundleItems(Result)
+            if type(Items) ~= "table" or #Items == 0 then
+                return nil, "Animation pack details could not be loaded"
+            end
+            local Priority = {Idle = 1, Walk = 2, Run = 3, Jump = 4, Fall = 5, Climb = 6, Swim = 7, SwimIdle = 8}
+            local Best
+            for _, Item in next, Items do
+                local ItemId = self:NormalizeAssetId(Item.Id or Item.id)
+                local AnimationType = ItemId and self:GetAnimationType(Item, nil)
+                if AnimationType then
+                    local Candidate = {Id = ItemId, Type = AnimationType, Priority = Priority[AnimationType] or 99}
+                    if not Best or Candidate.Priority < Best.Priority then Best = Candidate end
+                end
+            end
+            if Best then
+                local Ids = self:ResolveAnimationIds(Best.Id, true)
+                if not Ids or not Ids[1] then return nil, "The selected animation could not be resolved; tap the pack to retry" end
+                local Preview = {Id = Ids[1], Type = Best.Type}
+                self.PreviewCache[BundleId] = Preview
+                return Preview
+            end
+            return nil, "No previewable animation was found"
         end
 
         function Catalog:WarmPreviewResults()
@@ -7502,80 +7490,291 @@ do
 
         function Catalog:StartPreview(Result)
             local BundleId = self:NormalizeAssetId(Result and (Result.Id or Result.id))
+            local Card = BundleId and self.Cards[BundleId]
             self:StopPreview()
-            if not BundleId or not Overlay.Visible then return end
+            if not BundleId or not Card or not Card.Frame or not Card.Frame.Parent then return end
             local Generation = self.PreviewGeneration
-            local Animator, RigError = self:EnsurePreviewViewport()
-            local PreviewOverlay = self.PreviewOverlay
+            local Animator, RigError = self:EnsurePreviewViewport(Card)
             local Viewport = self.PreviewViewport
             local PreviewLabel = self.PreviewLabel
-            if not Animator or not PreviewOverlay or not Viewport then
+            if not Animator then
                 if PreviewLabel then PreviewLabel.Text = "Avatar preview unavailable" end
                 warn("Animation avatar preview failed:", RigError)
                 return
             end
-            self.PreviewResult = Result
-            self.PreviewYaw = 0
-            self.PreviewPitch = 0
-            self:UpdatePreviewCamera()
-            PreviewOverlay.Visible = true
-            self.PreviewTitle.Text = tostring(Result.Name or Result.name or ("Animation Pack " .. BundleId))
-            PreviewLabel.Text = "Loading all animations..."
-            local Failed = false
+            local Finished = false
             local function IsCurrent()
-                return not Failed and Generation == self.PreviewGeneration and Overlay.Visible and PreviewOverlay.Visible and self.PreviewResult == Result and self.PreviewViewport == Viewport
-            end
-            local function ClearTrack()
-                if self.PreviewTrack then
-                    pcall(self.PreviewTrack.Stop, self.PreviewTrack, 0.08)
-                    pcall(self.PreviewTrack.Destroy, self.PreviewTrack)
-                end
-                if self.PreviewAnimation and self.PreviewAnimation.Parent then pcall(self.PreviewAnimation.Destroy, self.PreviewAnimation) end
-                self.PreviewTrack = nil
-                self.PreviewAnimation = nil
+                return not Finished and Generation == self.PreviewGeneration and self.PreviewViewport == Viewport and Viewport.Parent and self.PreviewCard == Card
             end
             local function Fail(Message)
                 if not IsCurrent() then return end
-                Failed = true
-                ClearTrack()
-                PreviewLabel.Text = "Preview unavailable • Back to return"
+                Finished = true
+                if self.PreviewTrack then
+                    pcall(self.PreviewTrack.Stop, self.PreviewTrack, 0)
+                    pcall(self.PreviewTrack.Destroy, self.PreviewTrack)
+                end
+                if self.PreviewAnimation then pcall(self.PreviewAnimation.Destroy, self.PreviewAnimation) end
+                self.PreviewTrack = nil
+                self.PreviewAnimation = nil
+                PreviewLabel.Text = "Unavailable - tap to retry"
                 warn("Animation preview failed (pack " .. BundleId .. "):", Message)
             end
+            PreviewLabel.Text = "Loading preview..."
+            task.delay(12, function() Fail("Animation loading timed out") end)
             task.spawn(function()
                 local Success, ErrorMessage = pcall(function()
-                    local Previews, ResolveError = self:ResolvePreviewAnimations(Result)
+                    local Preview, ResolveError = self:ResolvePreviewAnimation(Result)
                     if not IsCurrent() then return end
-                    if not Previews or #Previews == 0 then Fail(ResolveError or "No playable animation was found") return end
-                    while IsCurrent() do
-                        for Index = 1, #Previews do
-                            local Preview = Previews[Index]
-                            if not IsCurrent() then return end
-                            ClearTrack()
+                    if not Preview then Fail(ResolveError or "No playable animation was found") return end
+                    local Animation = Instance.new("Animation")
+                    Animation.AnimationId = "rbxassetid://" .. tostring(Preview.Id)
+                    Animation.Parent = Viewport
+                    self.PreviewAnimation = Animation
+                    local Track = Animator:LoadAnimation(Animation)
+                    if not IsCurrent() then
+                        if Track then pcall(Track.Destroy, Track) end
+                        pcall(Animation.Destroy, Animation)
+                        return
+                    end
+                    if not Track then Fail("Animation track could not be created") return end
+                    self.PreviewTrack = Track
+                    Track.Looped = true
+                    Track.Priority = Enum.AnimationPriority.Action
+                    Track:Play(0.08, 1, 1)
+                    while IsCurrent() and (Track.Length <= 0 or not Track.IsPlaying) do task.wait(0.05) end
+                    if not IsCurrent() then return end
+                    Finished = true
+                    PreviewLabel.Text = Preview.Type == "SwimIdle" and "Swim Idle" or Preview.Type or "Preview"
+                end)
+                if not Success then Fail(ErrorMessage) end
+            end)
+        end
+
+        function Catalog:EnsureFullPreviewOverlay()
+            if self.FullPreviewOverlay and self.FullPreviewOverlay.Parent then return self.FullPreviewOverlay end
+            local FullOverlay = New("Frame", {
+                Active = true,
+                BackgroundColor3 = "BackgroundColor",
+                BorderSizePixel = 0,
+                Position = UDim2.fromScale(0, 0),
+                Size = UDim2.fromScale(1, 1),
+                Visible = false,
+                ZIndex = 70,
+                Parent = Overlay,
+            })
+            New("UICorner", {CornerRadius = UDim.new(0, Library.CornerRadius), Parent = FullOverlay})
+            local BackButton = New("TextButton", {
+                BackgroundColor3 = "MainColor",
+                BackgroundTransparency = 0.08,
+                Position = UDim2.fromOffset(8, 8),
+                Size = UDim2.fromOffset(74, 32),
+                Text = "‹ Back",
+                TextSize = 12,
+                ZIndex = 75,
+                Parent = FullOverlay,
+            })
+            Library:AddOutline(BackButton)
+            New("UICorner", {CornerRadius = UDim.new(0, Library.CornerRadius), Parent = BackButton})
+            local Title = New("TextLabel", {
+                BackgroundColor3 = "MainColor",
+                BackgroundTransparency = 0.12,
+                AnchorPoint = Vector2.new(0.5, 0),
+                Position = UDim2.new(0.5, 0, 0, 8),
+                Size = UDim2.new(1, -188, 0, 32),
+                Text = "Animation Preview",
+                TextSize = 13,
+                TextTruncate = Enum.TextTruncate.AtEnd,
+                ZIndex = 74,
+                Parent = FullOverlay,
+            })
+            New("UICorner", {CornerRadius = UDim.new(0, Library.CornerRadius), Parent = Title})
+            local Hint = New("TextLabel", {
+                BackgroundColor3 = "MainColor",
+                BackgroundTransparency = 0.12,
+                AnchorPoint = Vector2.new(0.5, 1),
+                Position = UDim2.new(0.5, 0, 1, -8),
+                Size = UDim2.new(1, -16, 0, 28),
+                Text = Library.IsMobile and "Drag to rotate • cycles all animations" or "Drag to rotate • mouse wheel to zoom • cycles all animations",
+                TextSize = 11,
+                TextTruncate = Enum.TextTruncate.AtEnd,
+                ZIndex = 74,
+                Parent = FullOverlay,
+            })
+            New("UICorner", {CornerRadius = UDim.new(0, Library.CornerRadius), Parent = Hint})
+            self.FullPreviewOverlay = FullOverlay
+            self.FullPreviewTitle = Title
+            self.FullPreviewHint = Hint
+            self.FullPreviewBackButton = BackButton
+            Library:GiveSignal(BackButton.MouseButton1Click:Connect(function()
+                self:CloseFullPreview()
+            end))
+            return FullOverlay
+        end
+
+        function Catalog:UpdateFullPreviewCamera()
+            if not self.FullPreviewOpen or not self.PreviewCamera then return end
+            local Pitch = math.clamp(self.FullPreviewPitch, math.rad(-75), math.rad(75))
+            local CosPitch = math.cos(Pitch)
+            local Offset = Vector3.new(math.sin(self.FullPreviewYaw) * CosPitch, math.sin(Pitch), -math.cos(self.FullPreviewYaw) * CosPitch) * self.FullPreviewDistance
+            self.PreviewCamera.CFrame = CFrame.lookAt(self.FullPreviewCenter + Offset, self.FullPreviewCenter)
+        end
+
+        function Catalog:ResolveFullPreviewAnimations(Result)
+            local BundleId = self:NormalizeAssetId(Result and (Result.Id or Result.id))
+            if not BundleId then return nil, "Invalid animation pack ID" end
+            if self.FullPreviewSequenceCache[BundleId] then return self.FullPreviewSequenceCache[BundleId] end
+            local Pack, ResolveError = self:ResolvePack(Result)
+            if not Pack then return nil, ResolveError or "Animation pack details could not be loaded" end
+            local Order = {
+                {"Idle1", "Idle 1"},
+                {"Idle2", "Idle 2"},
+                {"Walk", "Walk"},
+                {"Run", "Run"},
+                {"Jump", "Jump"},
+                {"Fall", "Fall"},
+                {"Climb", "Climb"},
+                {"Swim", "Swim"},
+                {"SwimIdle", "Swim Idle"},
+            }
+            local Sequence = {}
+            local Seen = {}
+            for _, Entry in next, Order do
+                local AnimationId = self:NormalizeAssetId(Pack[Entry[1]])
+                if AnimationId and not Seen[AnimationId] then
+                    Seen[AnimationId] = true
+                    table.insert(Sequence, {Id = AnimationId, Type = Entry[2]})
+                end
+            end
+            if #Sequence == 0 then return nil, "No previewable animations were found" end
+            self.FullPreviewSequenceCache[BundleId] = Sequence
+            return Sequence
+        end
+
+        function Catalog:StopFullPreviewTrack()
+            if self.FullPreviewTrack then
+                pcall(self.FullPreviewTrack.Stop, self.FullPreviewTrack, 0.08)
+                pcall(self.FullPreviewTrack.Destroy, self.FullPreviewTrack)
+            end
+            if self.FullPreviewAnimation and self.FullPreviewAnimation.Parent then pcall(self.FullPreviewAnimation.Destroy, self.FullPreviewAnimation) end
+            self.FullPreviewTrack = nil
+            self.FullPreviewAnimation = nil
+        end
+
+        function Catalog:OpenFullPreview(Result)
+            if self.FullPreviewOpen or not Result or not self.PreviewViewport or not self.PreviewViewport.Parent or not self.PreviewAnimator then return end
+            local BundleId = self:NormalizeAssetId(Result.Id or Result.id)
+            local Card = BundleId and self.Cards[BundleId]
+            if not Card or self.PreviewCard ~= Card then return end
+            local FullOverlay = self:EnsureFullPreviewOverlay()
+            if not FullOverlay then return end
+
+            self.FullPreviewGeneration += 1
+            local Generation = self.FullPreviewGeneration
+            self.FullPreviewOpen = true
+            self.FullPreviewResult = Result
+            self.FullPreviewCard = Card
+            self.FullPreviewDragging = false
+            self.FullPreviewDragInput = nil
+            self.FullPreviewLastPosition = nil
+            self.FullPreviewOriginalCameraCFrame = self.PreviewCamera.CFrame
+
+            if self.PreviewTrack then
+                pcall(self.PreviewTrack.Stop, self.PreviewTrack, 0.08)
+                pcall(self.PreviewTrack.Destroy, self.PreviewTrack)
+                self.PreviewTrack = nil
+            end
+            if self.PreviewAnimation and self.PreviewAnimation.Parent then
+                pcall(self.PreviewAnimation.Destroy, self.PreviewAnimation)
+                self.PreviewAnimation = nil
+            end
+
+            FullOverlay.Visible = true
+            self.FullPreviewTitle.Text = tostring(Result.Name or Result.name or ("Animation Pack " .. BundleId))
+            self.FullPreviewHint.Text = "Loading animations..."
+            self.PreviewViewport.Parent = FullOverlay
+            self.PreviewViewport.Position = UDim2.fromScale(0, 0)
+            self.PreviewViewport.Size = UDim2.fromScale(1, 1)
+            self.PreviewViewport.ZIndex = 71
+            self.PreviewViewport.Visible = true
+            self.PreviewLabel.Visible = false
+
+            local BoxCFrame, BoxSize = self.PreviewModel:GetBoundingBox()
+            self.FullPreviewCenter = BoxCFrame.Position + Vector3.new(0, BoxSize.Y * 0.05, 0)
+            local Distance = math.max(BoxSize.X, BoxSize.Y, BoxSize.Z) * 1.55
+            self.FullPreviewDistance = Distance
+            self.FullPreviewMinDistance = math.max(Distance * 0.55, 2.5)
+            self.FullPreviewMaxDistance = math.max(Distance * 2.6, self.FullPreviewMinDistance + 1)
+            self.FullPreviewYaw = 0
+            self.FullPreviewPitch = 0
+            self:UpdateFullPreviewCamera()
+
+            task.spawn(function()
+                local Success, ErrorMessage = pcall(function()
+                    local Sequence, ResolveError = self:ResolveFullPreviewAnimations(Result)
+                    if Generation ~= self.FullPreviewGeneration or not self.FullPreviewOpen then return end
+                    if not Sequence or #Sequence == 0 then
+                        self.FullPreviewHint.Text = tostring(ResolveError or "No playable animations were found")
+                        return
+                    end
+                    while Generation == self.FullPreviewGeneration and self.FullPreviewOpen and self.FullPreviewResult == Result do
+                        for Index, Preview in next, Sequence do
+                            if Generation ~= self.FullPreviewGeneration or not self.FullPreviewOpen or self.FullPreviewResult ~= Result then return end
+                            self:StopFullPreviewTrack()
                             local Animation = Instance.new("Animation")
                             Animation.AnimationId = "rbxassetid://" .. tostring(Preview.Id)
-                            Animation.Parent = Viewport
-                            self.PreviewAnimation = Animation
+                            Animation.Parent = self.PreviewViewport
+                            self.FullPreviewAnimation = Animation
                             local Track
-                            local Loaded = pcall(function() Track = Animator:LoadAnimation(Animation) end)
-                            if Loaded and Track and IsCurrent() then
-                                self.PreviewTrack = Track
+                            local Loaded = pcall(function() Track = self.PreviewAnimator:LoadAnimation(Animation) end)
+                            if Loaded and Track then
+                                self.FullPreviewTrack = Track
                                 Track.Looped = true
                                 Track.Priority = Enum.AnimationPriority.Action
                                 Track:Play(0.08, 1, 1)
-                                local LoadStarted = os.clock()
-                                while IsCurrent() and Track.Length <= 0 and os.clock() - LoadStarted < 4 do task.wait(0.05) end
-                                if IsCurrent() then
-                                    PreviewLabel.Text = string.format("%s • %d/%d • drag to rotate", Preview.Type, Index, #Previews)
-                                    local CycleStarted = os.clock()
-                                    while IsCurrent() and os.clock() - CycleStarted < self.PreviewCycleTime do task.wait(0.05) end
-                                end
+                                local Started = os.clock()
+                                while Generation == self.FullPreviewGeneration and self.FullPreviewOpen and Track.Length <= 0 and os.clock() - Started < 4 do task.wait(0.05) end
+                                if Generation ~= self.FullPreviewGeneration or not self.FullPreviewOpen then return end
+                                self.FullPreviewHint.Text = string.format("%s • %d/%d • drag to rotate", Preview.Type, Index, #Sequence)
+                                local CycleStarted = os.clock()
+                                while Generation == self.FullPreviewGeneration and self.FullPreviewOpen and os.clock() - CycleStarted < self.FullPreviewCycleTime do task.wait(0.05) end
                             end
                         end
                     end
                 end)
-                if not Success then Fail(ErrorMessage) end
-                if not IsCurrent() then ClearTrack() end
+                if not Success and Generation == self.FullPreviewGeneration and self.FullPreviewOpen then
+                    self.FullPreviewHint.Text = "Preview unavailable"
+                    warn("Full animation preview failed:", ErrorMessage)
+                end
             end)
+        end
+
+        function Catalog:CloseFullPreview()
+            if not self.FullPreviewOpen then return end
+            local Result = self.FullPreviewResult
+            local Card = self.FullPreviewCard
+            self.FullPreviewGeneration += 1
+            self.FullPreviewOpen = false
+            self.FullPreviewDragging = false
+            self.FullPreviewDragInput = nil
+            self.FullPreviewLastPosition = nil
+            self:StopFullPreviewTrack()
+
+            if self.FullPreviewOverlay and self.FullPreviewOverlay.Parent then self.FullPreviewOverlay.Visible = false end
+            if self.PreviewViewport and self.PreviewViewport.Parent and Card and Card.Frame and Card.Frame.Parent then
+                self.PreviewViewport.Parent = Card.Frame
+                self.PreviewViewport.Position = UDim2.fromOffset(7, 7)
+                self.PreviewViewport.Size = UDim2.new(1, -14, 1, -48)
+                self.PreviewViewport.ZIndex = 63
+                self.PreviewViewport.Visible = true
+                if self.PreviewLabel then self.PreviewLabel.Visible = true end
+                if Card.Image and Card.Image.Parent then Card.Image.Visible = false end
+                if self.FullPreviewOriginalCameraCFrame and self.PreviewCamera then self.PreviewCamera.CFrame = self.FullPreviewOriginalCameraCFrame end
+            end
+
+            self.FullPreviewResult = nil
+            self.FullPreviewCard = nil
+            self.FullPreviewOriginalCameraCFrame = nil
+            if Result and self.SelectedResult == Result and Overlay.Visible then self:StartPreview(Result) end
         end
 
         function Catalog:QueuePreview(Result)
@@ -7724,6 +7923,7 @@ do
             for Index, Result in next, self.Results do self:CreateCard(Result, Index) end
             self:RefreshCards()
             local SelectedId = self.SelectedResult and self:NormalizeAssetId(self.SelectedResult.Id or self.SelectedResult.id)
+            if SelectedId and self.Cards[SelectedId] then self:QueuePreview(self.SelectedResult) end
             if #self.Results == 0 then
                 StatusLabel.Text = self.CurrentQuery ~= "" and ("No animation packs found for \"" .. self.CurrentQuery .. "\"") or "No animation packs found"
             else
@@ -7915,11 +8115,21 @@ do
             if #self.Results == 0 then self:Search(SearchBox.Text) else self:RenderResults() end
             task.defer(function()
                 if not Overlay.Visible or self.PreviewModel then return end
-                self:EnsurePreviewViewport()
+                local FirstResult = self.Results[1]
+                local BundleId = FirstResult and self:NormalizeAssetId(FirstResult.Id or FirstResult.id)
+                local Card = BundleId and self.Cards[BundleId]
+                if not Card then return end
+                local Animator = self:EnsurePreviewViewport(Card)
+                if Animator then self:StopPreview() end
             end)
         end
 
         function Catalog:Close()
+            if self.FullPreviewOpen then
+                self.FullPreviewGeneration += 1
+                self.FullPreviewOpen = false
+                self:StopFullPreviewTrack()
+            end
             self:StopPreview()
             Overlay.Visible = false
             SearchBox:ReleaseFocus()
