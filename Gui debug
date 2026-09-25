@@ -12058,7 +12058,7 @@ function Library:LoadSettingsTab(Window, SettingsInfo)
                             task.wait(math.max(0, Interval - 10))
                             if Library.Unloaded or Generation ~= AutoSaveGeneration or not (Toggles.SaveManager_AutoSave and Toggles.SaveManager_AutoSave.Value) then break end
                             local WarningConfig = Options.SaveManager_ConfigList and Options.SaveManager_ConfigList.Value
-                            if WarningConfig then
+                            if WarningConfig and not (Toggles.SaveManager_DisableAutoSaveNotifications and Toggles.SaveManager_DisableAutoSaveNotifications.Value) then
                                 Library:Notify({
                                     Title = "Auto Save",
                                     Description = string.format("Saving config %q in 10 seconds.", WarningConfig),
@@ -12071,22 +12071,24 @@ function Library:LoadSettingsTab(Window, SettingsInfo)
                             local ConfigName = Options.SaveManager_ConfigList and Options.SaveManager_ConfigList.Value
                             if ConfigName then
                                 local Success, Error = SaveManager:Save(ConfigName)
-                                if Success then
-                                    Library:Notify({
-                                        Title = "Auto Save",
-                                        Description = string.format("Saved config %q.", ConfigName),
-                                        Time = 3,
-                                        Icon = "circle-check",
-                                    })
-                                else
-                                    Library:Notify({
-                                        Title = "Auto Save Error",
-                                        Description = "Failed to save config: " .. tostring(Error) .. ".",
-                                        Time = 3,
-                                        Icon = "circle-x",
-                                    })
+                                if not (Toggles.SaveManager_DisableAutoSaveNotifications and Toggles.SaveManager_DisableAutoSaveNotifications.Value) then
+                                    if Success then
+                                        Library:Notify({
+                                            Title = "Auto Save",
+                                            Description = string.format("Saved config %q.", ConfigName),
+                                            Time = 3,
+                                            Icon = "circle-check",
+                                        })
+                                    else
+                                        Library:Notify({
+                                            Title = "Auto Save Error",
+                                            Description = "Failed to save config: " .. tostring(Error) .. ".",
+                                            Time = 3,
+                                            Icon = "circle-x",
+                                        })
+                                    end
                                 end
-                            else
+                            elseif not (Toggles.SaveManager_DisableAutoSaveNotifications and Toggles.SaveManager_DisableAutoSaveNotifications.Value) then
                                 Library:Notify({
                                     Title = "Auto Save",
                                     Description = "No config selected. Auto save was skipped.",
@@ -12117,6 +12119,10 @@ function Library:LoadSettingsTab(Window, SettingsInfo)
                     Callback = function()
                         if Toggles.SaveManager_AutoSave and Toggles.SaveManager_AutoSave.Value then RestartAutoSave() end
                     end,
+                })
+                AutoSaveSettings:AddToggle("SaveManager_DisableAutoSaveNotifications", {
+                    Text = "Disable Notifications",
+                    Default = false,
                 })
                 AutoSaveSettings:SetupDependencies({
                     { AutoSaveToggle, true },
