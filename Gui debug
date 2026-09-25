@@ -6916,13 +6916,13 @@ do
             return ProductInfo
         end
 
-        function Catalog:ResolveAnimationIds(CatalogId)
+        function Catalog:ResolveAnimationIds(CatalogId, ObjectsFirst)
             CatalogId = self:NormalizeAssetId(CatalogId)
             if not CatalogId then return nil end
-            if self.AnimationIdsCache[CatalogId] ~= nil then
+            if self.AnimationIdsCache[CatalogId] then
                 return self.AnimationIdsCache[CatalogId] or nil
             end
-            local ProductInfo = self:GetMarketplaceInfo(CatalogId, Enum.InfoType.Asset)
+            local ProductInfo = not ObjectsFirst and self:GetMarketplaceInfo(CatalogId, Enum.InfoType.Asset)
             local AssetTypeId = ProductInfo and tonumber(ProductInfo.AssetTypeId)
             if AssetTypeId == Enum.AssetType.Animation.Value then
                 local DirectIds = {CatalogId}
@@ -6960,8 +6960,13 @@ do
                 end
             end
             if #ResolvedIds == 0 then
-                self.AnimationIdsCache[CatalogId] = false
-                return nil
+                if ObjectsFirst then
+                    ProductInfo = self:GetMarketplaceInfo(CatalogId, Enum.InfoType.Asset)
+                    if ProductInfo and tonumber(ProductInfo.AssetTypeId) == Enum.AssetType.Animation.Value then
+                        ResolvedIds = {CatalogId}
+                    end
+                end
+                if #ResolvedIds == 0 then return nil end
             end
             self.AnimationIdsCache[CatalogId] = ResolvedIds
             return ResolvedIds
@@ -7000,7 +7005,7 @@ do
         function Catalog:GetBundleItems(Result)
             local BundleId = self:NormalizeAssetId(type(Result) == "table" and (Result.Id or Result.id) or Result)
             if not BundleId then return nil end
-            if self.BundleItemsCache[BundleId] ~= nil then return self.BundleItemsCache[BundleId] or nil end
+            if self.BundleItemsCache[BundleId] then return self.BundleItemsCache[BundleId] end
             if type(Result) == "table" then
                 local BundledItems = Result.BundledItems or Result.bundledItems
                 if type(BundledItems) == "table" and #BundledItems > 0 then
@@ -7022,7 +7027,7 @@ do
                 local MarketplaceInfo = self:GetMarketplaceInfo(BundleId, Enum.InfoType.Bundle)
                 Items = MarketplaceInfo and (MarketplaceInfo.Items or MarketplaceInfo.items) or nil
             end
-            self.BundleItemsCache[BundleId] = type(Items) == "table" and Items or false
+            self.BundleItemsCache[BundleId] = type(Items) == "table" and #Items > 0 and Items or nil
             self.BundleItemsLoading[BundleId] = nil
             Loading:Fire()
             task.defer(function() Loading:Destroy() end)
@@ -7250,6 +7255,7 @@ do
                 if Object:IsA("Script") or Object:IsA("LocalScript") or Object:IsA("ModuleScript") or Object:IsA("Tool") then
                     Object:Destroy()
                 elseif Object:IsA("BasePart") then
+                    Object.Anchored = false
                     Object.CanCollide = false
                     Object.CanTouch = false
                     Object.CanQuery = false
@@ -7334,7 +7340,7 @@ do
         function Catalog:ResolvePreviewAnimation(Result)
             local BundleId = self:NormalizeAssetId(Result and (Result.Id or Result.id))
             if not BundleId then return nil, "Invalid animation pack ID" end
-            if self.PreviewCache[BundleId] ~= nil then return self.PreviewCache[BundleId] or nil end
+            if self.PreviewCache[BundleId] then return self.PreviewCache[BundleId] or nil end
             local Pack = self.PackCache[BundleId]
             if Pack then
                 local PackPriority = {{"Idle1", "Idle"}, {"Walk", "Walk"}, {"Run", "Run"}, {"Jump", "Jump"}, {"Fall", "Fall"}, {"Climb", "Climb"}, {"Swim", "Swim"}, {"SwimIdle", "SwimIdle"}}
@@ -7348,7 +7354,6 @@ do
             end
             local Items = self:GetBundleItems(Result)
             if type(Items) ~= "table" or #Items == 0 then
-                self.PreviewCache[BundleId] = false
                 return nil, "Animation pack details could not be loaded"
             end
             local Priority = {Idle = 1, Walk = 2, Run = 3, Jump = 4, Fall = 5, Climb = 6, Swim = 7, SwimIdle = 8}
@@ -7362,43 +7367,26 @@ do
                 end
             end
             if Best then
-                local Preview = {Id = Best.Id, Type = Best.Type}
+                local Ids = self:ResolveAnimationIds(Best.Id, true)
+                if not Ids or not Ids[1] then return nil, "The selected animation could not be resolved; tap the pack to retry" end
+                local Preview = {Id = Ids[1], Type = Best.Type}
                 self.PreviewCache[BundleId] = Preview
                 return Preview
             end
-            self.PreviewCache[BundleId] = false
             return nil, "No previewable animation was found"
         end
 
         function Catalog:WarmPreviewResults()
             local Generation = self.SearchGeneration
-            local PageResults = table.clone(self.Results)
+            local PageResults = self.Results
             local NextIndex = 1
-            local WorkerCount = math.min(3, #PageResults)
-            for _ = 1, WorkerCount do
+            for _ = 1, math.min(3, #PageResults) do
                 task.spawn(function()
-                    while Overlay.Visible and Generation == self.SearchGeneration do
-                        local Index = NextIndex
+                    while Overlay.Visible and Generation == self.SearchGeneration and self.Results == PageResults do
+                        local Result = PageResults[NextIndex]
                         NextIndex += 1
-                        local Result = PageResults[Index]
                         if not Result then break end
-                        local BundleId = self:NormalizeAssetId(Result.Id or Result.id)
-                        if BundleId and self.PreviewCache[BundleId] == nil then
-                            local Items = self:GetBundleItems(Result)
-                            if type(Items) == "table" then
-                                local Priority = {Idle = 1, Walk = 2, Run = 3, Jump = 4, Fall = 5, Climb = 6, Swim = 7, SwimIdle = 8}
-                                local Best
-                                for _, Item in next, Items do
-                                    local ItemId = self:NormalizeAssetId(Item.Id or Item.id)
-                                    local AnimationType = ItemId and self:GetAnimationType(Item, nil)
-                                    if AnimationType then
-                                        local Candidate = {Id = ItemId, Type = AnimationType, Priority = Priority[AnimationType] or 99}
-                                        if not Best or Candidate.Priority < Best.Priority then Best = Candidate end
-                                    end
-                                end
-                                if Best then self.PreviewCache[BundleId] = {Id = Best.Id, Type = Best.Type} end
-                            end
-                        end
+                        pcall(self.GetBundleItems, self, Result)
                     end
                 end)
             end
@@ -7418,38 +7406,51 @@ do
                 warn("Animation avatar preview failed:", RigError)
                 return
             end
+            local Finished = false
+            local function IsCurrent()
+                return not Finished and Generation == self.PreviewGeneration and self.PreviewViewport == Viewport and Viewport.Parent and self.PreviewCard == Card
+            end
+            local function Fail(Message)
+                if not IsCurrent() then return end
+                Finished = true
+                if self.PreviewTrack then
+                    pcall(self.PreviewTrack.Stop, self.PreviewTrack, 0)
+                    pcall(self.PreviewTrack.Destroy, self.PreviewTrack)
+                end
+                if self.PreviewAnimation then pcall(self.PreviewAnimation.Destroy, self.PreviewAnimation) end
+                self.PreviewTrack = nil
+                self.PreviewAnimation = nil
+                PreviewLabel.Text = "Unavailable - tap to retry"
+                warn("Animation preview failed (pack " .. BundleId .. "):", Message)
+            end
             PreviewLabel.Text = "Loading preview..."
+            task.delay(12, function() Fail("Animation loading timed out") end)
             task.spawn(function()
-                local Preview, ErrorMessage = self:ResolvePreviewAnimation(Result)
-                if Generation ~= self.PreviewGeneration or self.PreviewViewport ~= Viewport or not Viewport.Parent or self.PreviewCard ~= Card then return end
-                if not Preview then
-                    PreviewLabel.Text = "Preview unavailable"
-                    warn("Animation preview failed:", ErrorMessage)
-                    return
-                end
-                local Animation = Instance.new("Animation")
-                Animation.AnimationId = "rbxassetid://" .. tostring(Preview.Id)
-                Animation.Parent = Viewport
-                local Track
-                local Loaded, LoadError = pcall(function() Track = Animator:LoadAnimation(Animation) end)
-                if Generation ~= self.PreviewGeneration or self.PreviewViewport ~= Viewport or not Viewport.Parent or self.PreviewCard ~= Card then
-                    if Track then pcall(Track.Destroy, Track) end
-                    Animation:Destroy()
-                    return
-                end
-                if not Loaded or not Track then
-                    Animation:Destroy()
-                    PreviewLabel.Text = "Preview unavailable"
-                    warn("Animation preview track failed:", LoadError)
-                    return
-                end
-                self.PreviewAnimation = Animation
-                self.PreviewTrack = Track
-                Track.Looped = true
-                Track.Priority = Enum.AnimationPriority.Action
-                local SlotNames = {Idle = "Idle", Walk = "Walk", Run = "Run", Jump = "Jump", Fall = "Fall", Climb = "Climb", Swim = "Swim", SwimIdle = "Swim Idle"}
-                PreviewLabel.Text = SlotNames[Preview.Type] or Preview.Type or "Preview"
-                pcall(Track.Play, Track, 0.08, 1, 1)
+                local Success, ErrorMessage = pcall(function()
+                    local Preview, ResolveError = self:ResolvePreviewAnimation(Result)
+                    if not IsCurrent() then return end
+                    if not Preview then Fail(ResolveError or "No playable animation was found") return end
+                    local Animation = Instance.new("Animation")
+                    Animation.AnimationId = "rbxassetid://" .. tostring(Preview.Id)
+                    Animation.Parent = Viewport
+                    self.PreviewAnimation = Animation
+                    local Track = Animator:LoadAnimation(Animation)
+                    if not IsCurrent() then
+                        if Track then pcall(Track.Destroy, Track) end
+                        pcall(Animation.Destroy, Animation)
+                        return
+                    end
+                    if not Track then Fail("Animation track could not be created") return end
+                    self.PreviewTrack = Track
+                    Track.Looped = true
+                    Track.Priority = Enum.AnimationPriority.Action
+                    Track:Play(0.08, 1, 1)
+                    while IsCurrent() and (Track.Length <= 0 or not Track.IsPlaying) do task.wait(0.05) end
+                    if not IsCurrent() then return end
+                    Finished = true
+                    PreviewLabel.Text = Preview.Type == "SwimIdle" and "Swim Idle" or Preview.Type or "Preview"
+                end)
+                if not Success then Fail(ErrorMessage) end
             end)
         end
 
