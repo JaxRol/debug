@@ -12121,11 +12121,6 @@ function Library:LoadSettingsTab(Window, SettingsInfo)
                 AutoSaveSettings:SetupDependencies({
                     { AutoSaveToggle, true },
                 })
-                SaveManager:SetIgnoreIndexes({
-                    "SaveManager_AutoSave",
-                    "SaveManager_AutoSaveInterval",
-                })
-
                 task.defer(function()
                     SaveManager:LoadAutoloadConfig()
                 end)
