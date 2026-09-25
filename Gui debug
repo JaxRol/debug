@@ -7364,10 +7364,9 @@ do
             self.PreviewAnimation = nil
             self.PreviewCard = nil
 
-            if self.PreviewModel and self.PreviewModel.Parent then
-                pcall(self.PreviewModel.Destroy, self.PreviewModel)
-            end
-            self.PreviewModel = nil
+            -- Keep the preview avatar alive. Rebuilding the whole character every time
+            -- caused the blank ViewportFrame regression. The Animator is reset when the
+            -- next preview starts, which still prevents animation-state buildup.
             self.PreviewAnimator = nil
 
             if self.PreviewViewport and self.PreviewViewport.Parent then
@@ -7411,6 +7410,7 @@ do
                     Object.CanCollide = false
                     Object.CanTouch = false
                     Object.CanQuery = false
+                    Object.LocalTransparencyModifier = 0
                     Object.AssemblyLinearVelocity = Vector3.zero
                     Object.AssemblyAngularVelocity = Vector3.zero
                 end
@@ -7429,6 +7429,49 @@ do
             Clone:PivotTo(CFrame.new())
             Clone.Parent = World
             return Clone, Humanoid, Animator
+        end
+
+        function Catalog:ResetRigAnimator(Model)
+            if not Model or not Model.Parent then return nil end
+            local Humanoid = Model:FindFirstChildOfClass("Humanoid")
+            if not Humanoid then return nil end
+
+            local Animator = Humanoid:FindFirstChildOfClass("Animator")
+            if Animator then pcall(Animator.Destroy, Animator) end
+
+            Animator = Instance.new("Animator")
+            Animator.Parent = Humanoid
+            return Animator
+        end
+
+        function Catalog:FramePreviewCamera(Model, Camera, FullPreview)
+            if not Model or not Model.Parent or not Camera then return nil, nil, nil end
+
+            local Root = Model:FindFirstChild("HumanoidRootPart")
+            local BoxCFrame, BoxSize = Model:GetBoundingBox()
+
+            -- Clamp pathological accessory/extents values so one odd accessory cannot
+            -- place the camera hundreds of studs away.
+            local Height = math.clamp(BoxSize.Y, 4, 9)
+            local Width = math.clamp(math.max(BoxSize.X, BoxSize.Z), 2, 7)
+            local Center = Root and (Root.Position + Vector3.new(0, Height * 0.08, 0)) or BoxCFrame.Position
+            local Distance = math.max(Height * 1.15, Width * 1.3, 5.5)
+
+            Camera.FieldOfView = 32
+
+            if FullPreview then
+                self.FullPreviewCenter = Center
+                self.FullPreviewDistance = Distance
+                self.FullPreviewMinDistance = math.max(Distance * 0.55, 2.5)
+                self.FullPreviewMaxDistance = math.max(Distance * 2.5, self.FullPreviewMinDistance + 1)
+                self.FullPreviewYaw = 0
+                self.FullPreviewPitch = 0
+                self:UpdateFullPreviewCamera()
+            else
+                Camera.CFrame = CFrame.lookAt(Center + Vector3.new(Distance * 0.06, Height * 0.02, -Distance), Center)
+            end
+
+            return Center, Distance, Height
         end
 
         function Catalog:EnsurePreviewViewport(Card)
@@ -7475,17 +7518,17 @@ do
             Viewport.Visible = true
             self.PreviewCard = Card
             if Card.Image and Card.Image.Parent then Card.Image.Visible = false end
-            if not self.PreviewModel or not self.PreviewModel.Parent or not self.PreviewAnimator or not self.PreviewAnimator.Parent then
-                if self.PreviewModel and self.PreviewModel.Parent then self.PreviewModel:Destroy() end
+            if not self.PreviewModel or not self.PreviewModel.Parent then
                 local Clone, Humanoid, Animator, RigError = self:CreatePreviewRig(self.PreviewWorld)
                 if not Clone or not Animator then return nil, RigError end
                 self.PreviewModel = Clone
                 self.PreviewAnimator = Animator
-                local BoxCFrame, BoxSize = Clone:GetBoundingBox()
-                local Center = BoxCFrame.Position + Vector3.new(0, BoxSize.Y * 0.05, 0)
-                local Distance = math.max(BoxSize.X, BoxSize.Y, BoxSize.Z) * 1.55
-                self.PreviewCamera.CFrame = CFrame.lookAt(Center + Vector3.new(Distance * 0.08, BoxSize.Y * 0.03, -Distance), Center)
+            else
+                self.PreviewAnimator = self:ResetRigAnimator(self.PreviewModel)
+                if not self.PreviewAnimator then return nil, "Avatar animator could not be reset" end
             end
+
+            self:FramePreviewCamera(self.PreviewModel, self.PreviewCamera, false)
             return self.PreviewAnimator
         end
 
@@ -7642,9 +7685,11 @@ do
 
         function Catalog:BuildFullPreviewRig()
             if not self.FullPreviewWorld then return false, "Preview world is unavailable" end
+
             if self.FullPreviewModel and self.FullPreviewModel.Parent then
-                self.FullPreviewModel:Destroy()
+                pcall(self.FullPreviewModel.Destroy, self.FullPreviewModel)
             end
+
             self.FullPreviewModel = nil
             self.FullPreviewAnimator = nil
             self.FullPreviewCharacter = nil
@@ -7655,16 +7700,7 @@ do
             self.FullPreviewModel = Clone
             self.FullPreviewAnimator = Animator
             self.FullPreviewCharacter = LocalPlayer.Character
-
-            local BoxCFrame, BoxSize = Clone:GetBoundingBox()
-            self.FullPreviewCenter = BoxCFrame.Position + Vector3.new(0, BoxSize.Y * 0.05, 0)
-            local Distance = math.max(BoxSize.X, BoxSize.Y, BoxSize.Z) * 1.55
-            self.FullPreviewDistance = Distance
-            self.FullPreviewMinDistance = math.max(Distance * 0.55, 2.5)
-            self.FullPreviewMaxDistance = math.max(Distance * 2.6, self.FullPreviewMinDistance + 1)
-            self.FullPreviewYaw = 0
-            self.FullPreviewPitch = 0
-            self:UpdateFullPreviewCamera()
+            self:FramePreviewCamera(Clone, self.FullPreviewCamera, true)
             return true
         end
 
@@ -7822,10 +7858,13 @@ do
                 end))
             end
 
-            if not self.FullPreviewModel or not self.FullPreviewModel.Parent or not self.FullPreviewAnimator or not self.FullPreviewAnimator.Parent or self.FullPreviewCharacter ~= LocalPlayer.Character then
+            if not self.FullPreviewModel or not self.FullPreviewModel.Parent or self.FullPreviewCharacter ~= LocalPlayer.Character then
                 return self:BuildFullPreviewRig()
             end
 
+            self.FullPreviewAnimator = self:ResetRigAnimator(self.FullPreviewModel)
+            if not self.FullPreviewAnimator then return false, "Avatar animator could not be reset" end
+            self:FramePreviewCamera(self.FullPreviewModel, self.FullPreviewCamera, true)
             return true
         end
 
@@ -8074,7 +8113,7 @@ do
             self.FullPreviewLastPosition = nil
             self.FullPreviewYaw = 0
             self.FullPreviewPitch = 0
-            self:UpdateFullPreviewCamera()
+            self:FramePreviewCamera(self.FullPreviewModel, self.FullPreviewCamera, true)
 
             self.FullPreviewTitle.Text = tostring(Result.Name or Result.name or "Animation Preview")
             self.FullPreviewStatus.Text = "Opening preview..."
@@ -8108,16 +8147,9 @@ do
             elseif self.FullPreviewOverlay and self.FullPreviewOverlay.Parent then
                 self.FullPreviewOverlay.Visible = false
 
-                if self.FullPreviewModel and self.FullPreviewModel.Parent then
-                    pcall(self.FullPreviewModel.Destroy, self.FullPreviewModel)
-                end
-                self.FullPreviewModel = nil
+                -- Keep the rendered avatar/world intact. A fresh Animator is created
+                -- on the next open, so tracks cannot accumulate across sessions.
                 self.FullPreviewAnimator = nil
-                self.FullPreviewCharacter = nil
-
-                if self.FullPreviewWorld then
-                    pcall(self.FullPreviewWorld.ClearAllChildren, self.FullPreviewWorld)
-                end
             end
         end
 
