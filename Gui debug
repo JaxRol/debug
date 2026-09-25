@@ -12047,6 +12047,85 @@ function Library:LoadSettingsTab(Window, SettingsInfo)
                     end,
                 })
 
+                local AutoSaveGeneration = 0
+                local function RestartAutoSave()
+                    AutoSaveGeneration += 1
+                    local Generation = AutoSaveGeneration
+                    if not (Toggles.SaveManager_AutoSave and Toggles.SaveManager_AutoSave.Value) then return end
+                    task.spawn(function()
+                        while not Library.Unloaded and Toggles.SaveManager_AutoSave and Toggles.SaveManager_AutoSave.Value and Generation == AutoSaveGeneration do
+                            local Interval = math.max(15, tonumber(Options.SaveManager_AutoSaveInterval and Options.SaveManager_AutoSaveInterval.Value) or 30)
+                            task.wait(math.max(0, Interval - 10))
+                            if Library.Unloaded or Generation ~= AutoSaveGeneration or not (Toggles.SaveManager_AutoSave and Toggles.SaveManager_AutoSave.Value) then break end
+                            local WarningConfig = Options.SaveManager_ConfigList and Options.SaveManager_ConfigList.Value
+                            if WarningConfig then
+                                Library:Notify({
+                                    Title = "Auto Save",
+                                    Description = string.format("Saving config %q in 10 seconds.", WarningConfig),
+                                    Time = 3,
+                                    Icon = "triangle-alert",
+                                })
+                            end
+                            task.wait(10)
+                            if Library.Unloaded or Generation ~= AutoSaveGeneration or not (Toggles.SaveManager_AutoSave and Toggles.SaveManager_AutoSave.Value) then break end
+                            local ConfigName = Options.SaveManager_ConfigList and Options.SaveManager_ConfigList.Value
+                            if ConfigName then
+                                local Success, Error = SaveManager:Save(ConfigName)
+                                if Success then
+                                    Library:Notify({
+                                        Title = "Auto Save",
+                                        Description = string.format("Saved config %q.", ConfigName),
+                                        Time = 3,
+                                        Icon = "circle-check",
+                                    })
+                                else
+                                    Library:Notify({
+                                        Title = "Auto Save Error",
+                                        Description = "Failed to save config: " .. tostring(Error) .. ".",
+                                        Time = 3,
+                                        Icon = "circle-x",
+                                    })
+                                end
+                            else
+                                Library:Notify({
+                                    Title = "Auto Save",
+                                    Description = "No config selected. Auto save was skipped.",
+                                    Time = 3,
+                                    Icon = "triangle-alert",
+                                })
+                            end
+                        end
+                    end)
+                end
+
+                local AutoSaveToggle = ConfigsGroup:AddToggle("SaveManager_AutoSave", {
+                    Text = "Auto Save",
+                    Default = false,
+                    Callback = function()
+                        RestartAutoSave()
+                    end,
+                })
+
+                local AutoSaveSettings = ConfigsGroup:AddDependencyBox()
+                AutoSaveSettings:AddSlider("SaveManager_AutoSaveInterval", {
+                    Text = "Auto Save Interval",
+                    Default = 30,
+                    Min = 15,
+                    Max = 300,
+                    Rounding = 0,
+                    Suffix = "s",
+                    Callback = function()
+                        if Toggles.SaveManager_AutoSave and Toggles.SaveManager_AutoSave.Value then RestartAutoSave() end
+                    end,
+                })
+                AutoSaveSettings:SetupDependencies({
+                    { AutoSaveToggle, true },
+                })
+                SaveManager:SetIgnoreIndexes({
+                    "SaveManager_AutoSave",
+                    "SaveManager_AutoSaveInterval",
+                })
+
                 task.defer(function()
                     SaveManager:LoadAutoloadConfig()
                 end)
