@@ -6649,6 +6649,7 @@ do
             FullPreviewStatus = nil,
             FullPreviewResult = nil,
             FullPreviewSequenceCache = {},
+            FullPreviewSequenceLoading = {},
             FullPreviewCycleTime = math.max(tonumber(Info.FullPreviewCycleTime) or 2.25, 0.5),
             FullPreviewDragging = false,
             FullPreviewDragInput = nil,
@@ -7066,58 +7067,87 @@ do
             local BundleId = self:NormalizeAssetId(type(Result) == "table" and (Result.Id or Result.id) or Result)
             if not BundleId then return nil, "Invalid animation pack ID" end
             if self.PackCache[BundleId] then return self.PackCache[BundleId] end
+
             local Items = self:GetBundleItems(Result)
             if type(Items) ~= "table" or #Items == 0 then return nil, "Animation pack details could not be loaded" end
+
             local Pack = {
                 Id = BundleId,
                 Name = tostring(type(Result) == "table" and (Result.Name or Result.name) or ("Animation Pack " .. BundleId)),
             }
-            local Pending = {}
+
+            local Unknown = {}
+
+            local function AddAnimation(AnimationType, AnimationId)
+                AnimationId = self:NormalizeAssetId(AnimationId)
+                if not AnimationType or not AnimationId then return end
+
+                if AnimationType == "Idle" then
+                    if not Pack.Idle1 then
+                        Pack.Idle1 = AnimationId
+                    elseif not Pack.Idle2 and Pack.Idle1 ~= AnimationId then
+                        Pack.Idle2 = AnimationId
+                    end
+                    return
+                end
+
+                if not Pack[AnimationType] then
+                    Pack[AnimationType] = AnimationId
+                end
+            end
+
             for _, Item in next, Items do
                 local ItemId = self:NormalizeAssetId(Item.Id or Item.id)
-                if ItemId then table.insert(Pending, {Item = Item, Id = ItemId}) end
-            end
-            local ResultsByIndex = {}
-            local Remaining = #Pending
-            for Index, Entry in next, Pending do
-                task.spawn(function()
-                    local Resolved
-                    pcall(function()
-                        local ProductInfo = self:GetMarketplaceInfo(Entry.Id, Enum.InfoType.Asset)
-                        local AnimationType = self:GetAnimationType(Entry.Item, ProductInfo)
-                        if AnimationType then
-                            local Ids = self:ResolveAnimationIds(Entry.Id)
-                            if Ids then Resolved = {Type = AnimationType, Ids = Ids} end
-                        end
-                    end)
-                    ResultsByIndex[Index] = Resolved or false
-                    Remaining = Remaining - 1
-                end)
-            end
-            while Remaining > 0 do task.wait() end
-            for Index = 1, #Pending do
-                local Resolved = ResultsByIndex[Index]
-                if Resolved then
-                    if Resolved.Type == "Idle" then
-                        for _, AnimationId in next, Resolved.Ids do
-                            if not Pack.Idle1 then Pack.Idle1 = AnimationId
-                            elseif not Pack.Idle2 then Pack.Idle2 = AnimationId break end
-                        end
+                if ItemId then
+                    local AnimationType = self:GetAnimationType(Item, nil)
+                    if AnimationType then
+                        AddAnimation(AnimationType, ItemId)
                     else
-                        Pack[Resolved.Type] = Resolved.Ids[1]
+                        table.insert(Unknown, {Item = Item, Id = ItemId})
                     end
                 end
             end
+
+            if #Unknown > 0 then
+                local Resolved = {}
+                local Remaining = #Unknown
+
+                for Index, Entry in next, Unknown do
+                    task.spawn(function()
+                        local AnimationType
+                        pcall(function()
+                            local ProductInfo = self:GetMarketplaceInfo(Entry.Id, Enum.InfoType.Asset)
+                            AnimationType = self:GetAnimationType(Entry.Item, ProductInfo)
+                        end)
+                        Resolved[Index] = AnimationType or false
+                        Remaining -= 1
+                    end)
+                end
+
+                while Remaining > 0 do task.wait() end
+
+                for Index, Entry in next, Unknown do
+                    local AnimationType = Resolved[Index]
+                    if AnimationType then AddAnimation(AnimationType, Entry.Id) end
+                end
+            end
+
             Pack.Idle2 = Pack.Idle2 or Pack.Idle1
             Pack.Walk = Pack.Walk or Pack.Run
             Pack.Run = Pack.Run or Pack.Walk
             Pack.Swim = Pack.Swim or Pack.SwimIdle
             Pack.SwimIdle = Pack.SwimIdle or Pack.Swim
+
             local HasAnimation = false
             for _, SlotKey in next, self.SlotOrder do
-                if Pack[SlotKey] then HasAnimation = true break end
+                if Pack[SlotKey] then
+                    HasAnimation = true
+                    break
+                end
             end
+
             if not HasAnimation then return nil, "No playable locomotion animations were found in this bundle" end
+
             self.PackCache[BundleId] = Pack
             return Pack
         end
@@ -7477,6 +7507,9 @@ do
                     if not IsCurrent() then return end
                     Finished = true
                     PreviewLabel.Text = Preview.Type == "SwimIdle" and "Swim Idle" or Preview.Type or "Preview"
+                    task.spawn(function()
+                        pcall(self.ResolveFullPreviewAnimations, self, Result)
+                    end)
                 end)
                 if not Success then Fail(ErrorMessage) end
             end)
@@ -7702,8 +7735,25 @@ do
             local Cached = self.FullPreviewSequenceCache[BundleId]
             if Cached then return Cached end
 
-            local Pack, ErrorMessage = self:ResolvePack(Result)
-            if not Pack then return nil, ErrorMessage or "Animation pack could not be loaded" end
+            local Loading = self.FullPreviewSequenceLoading[BundleId]
+            if Loading then
+                Loading.Event:Wait()
+                return self.FullPreviewSequenceCache[BundleId] or nil, self.FullPreviewSequenceCache[BundleId] and nil or "Animation pack could not be loaded"
+            end
+
+            Loading = Instance.new("BindableEvent")
+            self.FullPreviewSequenceLoading[BundleId] = Loading
+
+            local function Finish(Sequence, ErrorMessage)
+                if Sequence then self.FullPreviewSequenceCache[BundleId] = Sequence end
+                self.FullPreviewSequenceLoading[BundleId] = nil
+                Loading:Fire()
+                task.defer(function() Loading:Destroy() end)
+                return Sequence, ErrorMessage
+            end
+
+            local Pack, ResolveError = self:ResolvePack(Result)
+            if not Pack then return Finish(nil, ResolveError or "Animation pack could not be loaded") end
 
             local Order = {
                 {"Idle1", "Idle 1"},
@@ -7719,79 +7769,105 @@ do
 
             local Sequence = {}
             local Seen = {}
+
             for _, Entry in next, Order do
                 local AnimationId = self:NormalizeAssetId(Pack[Entry[1]])
                 if AnimationId and not Seen[AnimationId] then
                     Seen[AnimationId] = true
-                    table.insert(Sequence, {
-                        Id = AnimationId,
-                        Type = Entry[2],
-                    })
+                    table.insert(Sequence, {Id = AnimationId, Type = Entry[2]})
                 end
             end
 
-            if #Sequence == 0 then return nil, "No previewable animations were found" end
-            self.FullPreviewSequenceCache[BundleId] = Sequence
-            return Sequence
+            if #Sequence == 0 then return Finish(nil, "No previewable animations were found") end
+            return Finish(Sequence)
         end
 
         function Catalog:StartFullPreviewCycle(Result)
             self.FullPreviewGeneration += 1
             local Generation = self.FullPreviewGeneration
+            local BundleId = self:NormalizeAssetId(Result and (Result.Id or Result.id))
             self:StopFullPreviewTrack()
 
-            task.spawn(function()
-                local Success, ErrorMessage = pcall(function()
-                    local Sequence, ResolveError = self:ResolveFullPreviewAnimations(Result)
-                    if Generation ~= self.FullPreviewGeneration or not self.FullPreviewOpen then return end
+            local function IsCurrent()
+                return Generation == self.FullPreviewGeneration and self.FullPreviewOpen and self.FullPreviewResult == Result
+            end
 
-                    if not Sequence or #Sequence == 0 then
-                        self.FullPreviewStatus.Text = tostring(ResolveError or "No previewable animations were found")
-                        return
-                    end
+            local function PlayPreview(Preview)
+                if not IsCurrent() or not Preview or not Preview.Id then return false end
+                self:StopFullPreviewTrack()
 
-                    while Generation == self.FullPreviewGeneration and self.FullPreviewOpen and self.FullPreviewResult == Result do
-                        for Index, Preview in next, Sequence do
-                            if Generation ~= self.FullPreviewGeneration or not self.FullPreviewOpen or self.FullPreviewResult ~= Result then return end
+                local Animation = Instance.new("Animation")
+                Animation.AnimationId = "rbxassetid://" .. tostring(Preview.Id)
+                Animation.Parent = self.FullPreviewViewport
+                self.FullPreviewAnimation = Animation
 
-                            self:StopFullPreviewTrack()
-
-                            local Animation = Instance.new("Animation")
-                            Animation.AnimationId = "rbxassetid://" .. tostring(Preview.Id)
-                            Animation.Parent = self.FullPreviewViewport
-                            self.FullPreviewAnimation = Animation
-
-                            local Track
-                            local Loaded = pcall(function()
-                                Track = self.FullPreviewAnimator:LoadAnimation(Animation)
-                            end)
-
-                            if Loaded and Track then
-                                self.FullPreviewTrack = Track
-                                Track.Looped = true
-                                Track.Priority = Enum.AnimationPriority.Action
-                                Track:Play(0.08, 1, 1)
-
-                                local LoadStarted = os.clock()
-                                while Generation == self.FullPreviewGeneration and self.FullPreviewOpen and Track.Length <= 0 and os.clock() - LoadStarted < 3 do
-                                    task.wait(0.05)
-                                end
-
-                                if Generation ~= self.FullPreviewGeneration or not self.FullPreviewOpen then return end
-
-                                self.FullPreviewStatus.Text = string.format("%s • %d/%d • drag to rotate", Preview.Type, Index, #Sequence)
-                                local CycleStarted = os.clock()
-                                while Generation == self.FullPreviewGeneration and self.FullPreviewOpen and os.clock() - CycleStarted < self.FullPreviewCycleTime do
-                                    task.wait(0.05)
-                                end
-                            end
-                        end
-                    end
+                local Track
+                local Loaded = pcall(function()
+                    Track = self.FullPreviewAnimator:LoadAnimation(Animation)
                 end)
 
-                if not Success and Generation == self.FullPreviewGeneration and self.FullPreviewOpen then
-                    self.FullPreviewStatus.Text = "Preview unavailable"
-                    warn("Full animation preview failed:", ErrorMessage)
+                if not Loaded or not Track or not IsCurrent() then
+                    if Track then pcall(Track.Destroy, Track) end
+                    if Animation.Parent then pcall(Animation.Destroy, Animation) end
+                    if self.FullPreviewAnimation == Animation then self.FullPreviewAnimation = nil end
+                    return false
+                end
+
+                self.FullPreviewTrack = Track
+                Track.Looped = true
+                Track.Priority = Enum.AnimationPriority.Action
+                Track:Play(0.05, 1, 1)
+                return true
+            end
+
+            task.spawn(function()
+                local Starter = BundleId and self.PreviewCache[BundleId]
+                if Starter and PlayPreview(Starter) then
+                    local StarterName = Starter.Type == "SwimIdle" and "Swim Idle" or Starter.Type or "Preview"
+                    self.FullPreviewStatus.Text = StarterName .. " • loading rest..."
+                else
+                    self.FullPreviewStatus.Text = "Preparing preview..."
+                end
+
+                local Success, Sequence, ResolveError = pcall(function()
+                    local Resolved, ErrorMessage = self:ResolveFullPreviewAnimations(Result)
+                    return Resolved, ErrorMessage
+                end)
+
+                if not IsCurrent() then return end
+
+                if not Success then
+                    if not self.FullPreviewTrack then self.FullPreviewStatus.Text = "Preview unavailable" end
+                    warn("Full animation preview failed:", Sequence)
+                    return
+                end
+
+                if not Sequence or #Sequence == 0 then
+                    if not self.FullPreviewTrack then self.FullPreviewStatus.Text = tostring(ResolveError or "No previewable animations were found") end
+                    return
+                end
+
+                local StartIndex = 1
+                if Starter and Starter.Id then
+                    for Index, Preview in next, Sequence do
+                        if tostring(Preview.Id) == tostring(Starter.Id) then
+                            StartIndex = Index % #Sequence + 1
+                            break
+                        end
+                    end
+                end
+
+                local Index = StartIndex
+                while IsCurrent() do
+                    local Preview = Sequence[Index]
+                    if PlayPreview(Preview) then
+                        self.FullPreviewStatus.Text = string.format("%s • %d/%d • drag to rotate", Preview.Type, Index, #Sequence)
+                        local CycleStarted = os.clock()
+                        while IsCurrent() and os.clock() - CycleStarted < self.FullPreviewCycleTime do
+                            task.wait(0.05)
+                        end
+                    end
+                    Index = Index % #Sequence + 1
                 end
             end)
         end
@@ -7815,7 +7891,7 @@ do
             self:UpdateFullPreviewCamera()
 
             self.FullPreviewTitle.Text = tostring(Result.Name or Result.name or "Animation Preview")
-            self.FullPreviewStatus.Text = "Loading animations..."
+            self.FullPreviewStatus.Text = "Opening preview..."
             self.FullPreviewOverlay.Visible = true
             self:StartFullPreviewCycle(Result)
         end
@@ -7864,21 +7940,31 @@ do
         end
 
         function Catalog:EquipSelected()
-            if self.Disabled then return end
+            if self.Disabled or self.Applying then return end
             local Result = self.SelectedResult
             if not Result then self:Notify("Animation Packs", "Select an animation pack first") return end
-            StatusLabel.Text = "Loading " .. tostring(Result.Name) .. "..."
-            EquipButton.Text = "Loading..."
-            task.spawn(function()
-                local Pack, ErrorMessage = self:ResolvePack(Result)
+
+            local BundleId = self:NormalizeAssetId(Result.Id or Result.id)
+            local CachedPack = BundleId and self.PackCache[BundleId]
+
+            StatusLabel.Text = CachedPack and ("Equipping " .. tostring(Result.Name) .. "...") or ("Preparing " .. tostring(Result.Name) .. "...")
+            EquipButton.Text = "Equipping..."
+
+            task.defer(function()
+                local Pack, ErrorMessage = CachedPack, nil
+                if not Pack then Pack, ErrorMessage = self:ResolvePack(Result) end
+
                 if not Pack then
                     StatusLabel.Text = tostring(ErrorMessage or "Animation pack could not be loaded")
                     EquipButton.Text = "Equip"
                     self:Notify("Animation Packs", StatusLabel.Text)
                     return
                 end
+
+                StatusLabel.Text = "Equipping " .. tostring(Pack.Name) .. "..."
                 local Applied, ApplyError = self:ApplyPackData(Pack)
                 EquipButton.Text = "Equip"
+
                 if Applied then
                     StatusLabel.Text = "Equipped: " .. tostring(Pack.Name)
                 else
