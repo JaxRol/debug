@@ -6611,6 +6611,7 @@ do
             ResultById = {},
             QueryCache = {},
             PackCache = {},
+            PackLoading = {},
             ProductInfoCache = {},
             AnimationIdsCache = {},
             CurrentPages = nil,
@@ -7068,68 +7069,109 @@ do
             if not BundleId then return nil, "Invalid animation pack ID" end
             if self.PackCache[BundleId] then return self.PackCache[BundleId] end
 
+            local ExistingLoad = self.PackLoading[BundleId]
+            if ExistingLoad then
+                ExistingLoad.Event:Wait()
+                return self.PackCache[BundleId] or nil, ExistingLoad.Error or "Animation pack could not be loaded"
+            end
+
+            local Loading = {
+                Event = Instance.new("BindableEvent"),
+                Error = nil,
+            }
+            self.PackLoading[BundleId] = Loading
+
+            local function Finish(Pack, ErrorMessage)
+                if Pack then self.PackCache[BundleId] = Pack end
+                Loading.Error = ErrorMessage
+                self.PackLoading[BundleId] = nil
+                Loading.Event:Fire()
+                task.defer(function()
+                    Loading.Event:Destroy()
+                end)
+                return Pack, ErrorMessage
+            end
+
             local Items = self:GetBundleItems(Result)
-            if type(Items) ~= "table" or #Items == 0 then return nil, "Animation pack details could not be loaded" end
+            if type(Items) ~= "table" or #Items == 0 then
+                return Finish(nil, "Animation pack details could not be loaded")
+            end
 
             local Pack = {
                 Id = BundleId,
                 Name = tostring(type(Result) == "table" and (Result.Name or Result.name) or ("Animation Pack " .. BundleId)),
             }
 
-            local Unknown = {}
-
-            local function AddAnimation(AnimationType, AnimationId)
-                AnimationId = self:NormalizeAssetId(AnimationId)
-                if not AnimationType or not AnimationId then return end
-
-                if AnimationType == "Idle" then
-                    if not Pack.Idle1 then
-                        Pack.Idle1 = AnimationId
-                    elseif not Pack.Idle2 and Pack.Idle1 ~= AnimationId then
-                        Pack.Idle2 = AnimationId
-                    end
-                    return
-                end
-
-                if not Pack[AnimationType] then
-                    Pack[AnimationType] = AnimationId
-                end
-            end
+            local Entries = {}
 
             for _, Item in next, Items do
                 local ItemId = self:NormalizeAssetId(Item.Id or Item.id)
                 if ItemId then
                     local AnimationType = self:GetAnimationType(Item, nil)
-                    if AnimationType then
-                        AddAnimation(AnimationType, ItemId)
-                    else
-                        table.insert(Unknown, {Item = Item, Id = ItemId})
-                    end
+                    table.insert(Entries, {
+                        Item = Item,
+                        Id = ItemId,
+                        Type = AnimationType,
+                    })
                 end
             end
 
-            if #Unknown > 0 then
-                local Resolved = {}
-                local Remaining = #Unknown
+            -- Resolve obvious slot names first so useful locomotion slots become ready sooner.
+            local Priority = {
+                Idle = 1,
+                Walk = 2,
+                Run = 3,
+                Jump = 4,
+                Fall = 5,
+                Climb = 6,
+                Swim = 7,
+                SwimIdle = 8,
+            }
 
-                for Index, Entry in next, Unknown do
-                    task.spawn(function()
-                        local AnimationType
-                        pcall(function()
-                            local ProductInfo = self:GetMarketplaceInfo(Entry.Id, Enum.InfoType.Asset)
-                            AnimationType = self:GetAnimationType(Entry.Item, ProductInfo)
-                        end)
-                        Resolved[Index] = AnimationType or false
-                        Remaining -= 1
-                    end)
+            table.sort(Entries, function(A, B)
+                return (Priority[A.Type] or 99) < (Priority[B.Type] or 99)
+            end)
+
+            local function AddResolved(AnimationType, Ids)
+                if not AnimationType or type(Ids) ~= "table" or not Ids[1] then return end
+
+                if AnimationType == "Idle" then
+                    for _, AnimationId in next, Ids do
+                        AnimationId = self:NormalizeAssetId(AnimationId)
+                        if AnimationId then
+                            if not Pack.Idle1 then
+                                Pack.Idle1 = AnimationId
+                            elseif not Pack.Idle2 and Pack.Idle1 ~= AnimationId then
+                                Pack.Idle2 = AnimationId
+                                break
+                            end
+                        end
+                    end
+                    return
                 end
 
-                while Remaining > 0 do task.wait() end
-
-                for Index, Entry in next, Unknown do
-                    local AnimationType = Resolved[Index]
-                    if AnimationType then AddAnimation(AnimationType, Entry.Id) end
+                if not Pack[AnimationType] then
+                    Pack[AnimationType] = self:NormalizeAssetId(Ids[1])
                 end
+            end
+
+            for _, Entry in next, Entries do
+                local AnimationType = Entry.Type
+
+                if not AnimationType then
+                    local ProductInfo = self:GetMarketplaceInfo(Entry.Id, Enum.InfoType.Asset)
+                    AnimationType = self:GetAnimationType(Entry.Item, ProductInfo)
+                end
+
+                if AnimationType then
+                    -- These bundle item IDs are NOT directly playable AnimationClip IDs.
+                    -- Resolve the nested Animation.AnimationId and cache it.
+                    local Ids = self:ResolveAnimationIds(Entry.Id, true)
+                    AddResolved(AnimationType, Ids)
+                end
+
+                -- Never deserialize every asset in the same frame.
+                RunService.Heartbeat:Wait()
             end
 
             Pack.Idle2 = Pack.Idle2 or Pack.Idle1
@@ -7146,10 +7188,11 @@ do
                 end
             end
 
-            if not HasAnimation then return nil, "No playable locomotion animations were found in this bundle" end
+            if not HasAnimation then
+                return Finish(nil, "No playable locomotion animations were found in this bundle")
+            end
 
-            self.PackCache[BundleId] = Pack
-            return Pack
+            return Finish(Pack)
         end
 
         function Catalog:FindSlotAnimation(Animate, SlotKey)
@@ -7937,6 +7980,13 @@ do
             self:Display()
             self:RefreshCards()
             self:QueuePreview(Result)
+
+            local BundleId = self:NormalizeAssetId(Result and (Result.Id or Result.id))
+            if BundleId and not self.PackCache[BundleId] and not self.PackLoading[BundleId] then
+                task.spawn(function()
+                    pcall(self.ResolvePack, self, Result)
+                end)
+            end
         end
 
         function Catalog:EquipSelected()
@@ -7948,11 +7998,14 @@ do
             local CachedPack = BundleId and self.PackCache[BundleId]
 
             StatusLabel.Text = CachedPack and ("Equipping " .. tostring(Result.Name) .. "...") or ("Preparing " .. tostring(Result.Name) .. "...")
-            EquipButton.Text = "Equipping..."
+            EquipButton.Text = CachedPack and "Equipping..." or "Preparing..."
 
-            task.defer(function()
+            task.spawn(function()
                 local Pack, ErrorMessage = CachedPack, nil
-                if not Pack then Pack, ErrorMessage = self:ResolvePack(Result) end
+
+                if not Pack then
+                    Pack, ErrorMessage = self:ResolvePack(Result)
+                end
 
                 if not Pack then
                     StatusLabel.Text = tostring(ErrorMessage or "Animation pack could not be loaded")
@@ -7962,6 +8015,10 @@ do
                 end
 
                 StatusLabel.Text = "Equipping " .. tostring(Pack.Name) .. "..."
+                EquipButton.Text = "Equipping..."
+
+                RunService.Heartbeat:Wait()
+
                 local Applied, ApplyError = self:ApplyPackData(Pack)
                 EquipButton.Text = "Equip"
 
