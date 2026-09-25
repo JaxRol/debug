@@ -1,4 +1,5 @@
 
+
 local cloneref = (cloneref or clonereference or function(instance: any)
     return instance
 end)
@@ -6585,15 +6586,18 @@ do
         local PlayersService = cloneref(game:GetService("Players"))
         local LocalPlayer = PlayersService.LocalPlayer
 
+        local RequestedPageSize = tonumber(Info.PageSize)
+        local PageSize = (RequestedPageSize == 10 or RequestedPageSize == 28 or RequestedPageSize == 30) and RequestedPageSize or 10
         local Catalog = {
             Text = typeof(Info.Text) == "string" and Info.Text or "Animation Pack",
             Placeholder = typeof(Info.Placeholder) == "string" and Info.Placeholder or "Browse Roblox animation packs...",
             SearchPlaceholder = typeof(Info.SearchPlaceholder) == "string" and Info.SearchPlaceholder or "Search Roblox animation packs...",
-            PageSize = math.clamp(tonumber(Info.PageSize) or 20, 10, 30),
+            PageSize = PageSize,
             SearchDebounce = math.max(tonumber(Info.SearchDebounce) or 0.3, 0),
             KeepOnRespawn = Info.KeepOnRespawn ~= false,
             Callback = Info.Callback or function() end,
             Changed = Info.Changed or function() end,
+            BeforeEquip = Info.BeforeEquip,
             Disabled = Library:GetDisabledState(Info.Disabled),
             Visible = Info.Visible ~= false,
             Type = "AnimationCatalog",
@@ -6696,7 +6700,7 @@ do
         local SearchBoxHolder = New("Frame", {
             BackgroundColor3 = "MainColor",
             Position = UDim2.fromOffset(8, 8),
-            Size = UDim2.new(1, -160, 0, 32),
+            Size = UDim2.new(1, -60, 0, 32),
             ZIndex = 62,
             Parent = Overlay,
         })
@@ -6714,19 +6718,28 @@ do
             ZIndex = 63,
             Parent = SearchBoxHolder,
         })
-        local MoreButton = New("TextButton", {
+        local PreviousButton = New("TextButton", {
             BackgroundColor3 = "MainColor",
-            AnchorPoint = Vector2.new(1, 0),
-            Position = UDim2.new(1, -52, 0, 8),
-            Size = UDim2.fromOffset(92, 32),
-            Text = "Load More",
-            TextSize = 12,
-            Visible = false,
+            Position = UDim2.new(0, 8, 0, 46),
+            Size = UDim2.new(0.5, -12, 0, 30),
+            Text = "Previous",
+            TextSize = 13,
             ZIndex = 62,
             Parent = Overlay,
         })
-        Library:AddOutline(MoreButton)
-        New("UICorner", {CornerRadius = UDim.new(0, Library.CornerRadius), Parent = MoreButton})
+        Library:AddOutline(PreviousButton)
+        New("UICorner", {CornerRadius = UDim.new(0, Library.CornerRadius), Parent = PreviousButton})
+        local NextButton = New("TextButton", {
+            BackgroundColor3 = "MainColor",
+            Position = UDim2.new(0.5, 4, 0, 46),
+            Size = UDim2.new(0.5, -12, 0, 30),
+            Text = "Next",
+            TextSize = 13,
+            ZIndex = 62,
+            Parent = Overlay,
+        })
+        Library:AddOutline(NextButton)
+        New("UICorner", {CornerRadius = UDim.new(0, Library.CornerRadius), Parent = NextButton})
         local CloseButton = New("TextButton", {
             BackgroundColor3 = "MainColor",
             AnchorPoint = Vector2.new(1, 0),
@@ -6742,7 +6755,7 @@ do
 
         local StatusLabel = New("TextLabel", {
             BackgroundTransparency = 1,
-            Position = UDim2.fromOffset(9, 44),
+            Position = UDim2.fromOffset(9, 80),
             Size = UDim2.new(1, -18, 0, 18),
             Text = "Search Roblox animation packs",
             TextSize = 12,
@@ -6758,10 +6771,10 @@ do
             BackgroundTransparency = 1,
             BorderSizePixel = 0,
             CanvasSize = UDim2.new(),
-            Position = UDim2.fromOffset(8, 64),
+            Position = UDim2.fromOffset(8, 101),
             ScrollBarImageColor3 = "AccentColor",
             ScrollBarThickness = Library.IsMobile and 5 or 3,
-            Size = UDim2.new(1, -16, 1, -122),
+            Size = UDim2.new(1, -16, 1, -159),
             ZIndex = 61,
             Parent = Overlay,
         })
@@ -7099,6 +7112,10 @@ do
 
         function Catalog:ApplyPackData(Pack, Character, IsRespawn)
             if self.Applying then return false, "An animation pack is already being applied" end
+            if not IsRespawn and type(self.BeforeEquip) == "function" then
+                local Prepared, Reason = pcall(self.BeforeEquip, Pack)
+                if not Prepared or Reason == false then return false, tostring(Reason or "Couldn't prepare to equip the pack") end
+            end
             self.Applying = true
             local Success, Humanoid, Animate = self:CaptureCharacter(Character)
             if not Success then self.Applying = false return false, Humanoid end
@@ -7268,6 +7285,20 @@ do
             end))
         end
 
+        function Catalog:UpdatePageControls()
+            local Current = self.PageIndex or 1
+            local HasNext = self.PageHistory and self.PageHistory[Current + 1] ~= nil
+            local CanNext = not self.PageBusy and (HasNext or (self.CurrentPages and not self.CurrentPages.IsFinished))
+            local CanPrevious = not self.PageBusy and Current > 1
+            PreviousButton.Active = CanPrevious == true
+            PreviousButton.TextTransparency = CanPrevious and 0 or 0.5
+            NextButton.Active = CanNext == true
+            NextButton.TextTransparency = CanNext and 0 or 0.5
+            NextButton.Text = self.PageBusy and "Loading..." or "Next"
+            PreviousButton.Visible = true
+            NextButton.Visible = true
+        end
+
         function Catalog:RenderResults()
             self:ClearCards()
             self:UpdateGrid()
@@ -7276,8 +7307,9 @@ do
             if #self.Results == 0 then
                 StatusLabel.Text = self.CurrentQuery ~= "" and ("No animation packs found for \"" .. self.CurrentQuery .. "\"") or "No animation packs found"
             else
-                StatusLabel.Text = string.format("%d animation pack%s", #self.Results, #self.Results == 1 and "" or "s")
+                StatusLabel.Text = string.format("%d animation pack%s • Page %d", #self.Results, #self.Results == 1 and "" or "s", self.PageIndex or 1)
             end
+            self:UpdatePageControls()
         end
 
         function Catalog:AppendPage(Page)
@@ -7303,11 +7335,13 @@ do
             local CacheKey = string.lower(Query)
             local Cached = self.QueryCache[CacheKey]
             if Cached then
-                self.Results = table.clone(Cached.Results)
+                self.PageHistory = Cached.History or {table.clone(Cached.Results)}
+                self.PageIndex = Cached.Index or 1
+                self.Results = table.clone(self.PageHistory[self.PageIndex] or {})
                 self.ResultById = {}
                 for _, Result in next, self.Results do self.ResultById[tostring(Result.Id)] = Result end
                 self.CurrentPages = Cached.Pages
-                MoreButton.Visible = self.CurrentPages and not self.CurrentPages.IsFinished or false
+                self.PageBusy = false
                 self:RenderResults()
                 return
             end
@@ -7317,19 +7351,69 @@ do
             Params.BundleTypes = {Enum.BundleType.Animations}
             Params.SortType = Enum.CatalogSortType.Relevance
             Params.Limit = self.PageSize
+
             local Success, Pages = pcall(AvatarEditorService.SearchCatalogAsync, AvatarEditorService, Params)
+            if not Success or not Pages then
+                local ServiceError = tostring(Pages)
+                local HttpService = game:GetService("HttpService")
+                local function FetchCatalogPage(Cursor)
+                    local Url = "https://catalog.roblox.com/v1/search/items/details?Category=12&Subcategory=38&Limit=10"
+                    if Query ~= "" then Url ..= "&Keyword=" .. HttpService:UrlEncode(Query) end
+                    if Cursor and Cursor ~= "" then Url ..= "&Cursor=" .. HttpService:UrlEncode(Cursor) end
+                    local GotBody, Body = pcall(game.HttpGet, game, Url)
+                    if not GotBody or type(Body) ~= "string" then
+                        local Request = request or http_request or (syn and syn.request)
+                        if type(Request) ~= "function" then error("Roblox catalog HTTP request failed: " .. tostring(Body)) end
+                        local RequestSuccess, Response = pcall(Request, {Url = Url, Method = "GET"})
+                        if not RequestSuccess or type(Response) ~= "table" or tonumber(Response.StatusCode or Response.Status) ~= 200 then
+                            error("Roblox catalog HTTP request failed: " .. tostring(RequestSuccess and (Response and (Response.StatusCode or Response.Status)) or Response))
+                        end
+                        Body = Response.Body
+                    end
+                    local Data = HttpService:JSONDecode(Body)
+                    if type(Data) ~= "table" or type(Data.data) ~= "table" then error("Roblox catalog returned an invalid page") end
+                    return Data
+                end
+                local HttpSuccess, FirstPage = pcall(FetchCatalogPage, nil)
+                if HttpSuccess then
+                    local HttpPages = {Page = FirstPage.data, NextCursor = FirstPage.nextPageCursor, IsFinished = not FirstPage.nextPageCursor}
+                    function HttpPages:GetCurrentPage() return self.Page end
+                    function HttpPages:AdvanceToNextPageAsync()
+                        if self.IsFinished then return end
+                        local NextPage = FetchCatalogPage(self.NextCursor)
+                        self.Page = NextPage.data
+                        self.NextCursor = NextPage.nextPageCursor
+                        self.IsFinished = not self.NextCursor
+                    end
+                    Pages = HttpPages
+                    Success = true
+                else
+                    warn("Animation catalog search failed:", ServiceError, "HTTP fallback:", FirstPage)
+                    Pages = "Roblox catalog request failed: " .. tostring(FirstPage)
+                end
+            end
+
             if Generation ~= self.SearchGeneration then return end
             if not Success or not Pages then
-                StatusLabel.Text = "Couldn't load the Roblox animation catalog"
-                MoreButton.Visible = false
+                StatusLabel.Text = tostring(Pages):sub(1, 150)
+                self.PageBusy = false
+                self.CurrentPages = nil
+                self.PageHistory = nil
+                self.PageIndex = 1
+                self.Results = {}
+                self.ResultById = {}
+                self:ClearCards()
+                self:UpdatePageControls()
                 return
             end
             self.Results = {}
             self.ResultById = {}
             self.CurrentPages = Pages
             self:AppendPage(Pages:GetCurrentPage())
-            self.QueryCache[CacheKey] = {Results = table.clone(self.Results), Pages = Pages}
-            MoreButton.Visible = not Pages.IsFinished
+            self.PageHistory = {table.clone(self.Results)}
+            self.PageIndex = 1
+            self.PageBusy = false
+            self.QueryCache[CacheKey] = {Results = table.clone(self.Results), Pages = Pages, History = self.PageHistory, Index = 1}
             self:RenderResults()
         end
 
@@ -7337,6 +7421,8 @@ do
             Query = tostring(Query or "")
             self.CurrentQuery = Query
             self.SearchGeneration = self.SearchGeneration + 1
+            self.PageBusy = true
+            self:UpdatePageControls()
             local Generation = self.SearchGeneration
             task.delay(self.SearchDebounce, function()
                 if Generation == self.SearchGeneration and Overlay.Visible then
@@ -7345,22 +7431,57 @@ do
             end)
         end
 
-        function Catalog:LoadMore()
+        function Catalog:PreviousPage()
+            if self.PageBusy or not self.PageIndex or self.PageIndex <= 1 then return end
+            self.PageIndex -= 1
+            self.Results = table.clone(self.PageHistory[self.PageIndex])
+            self.ResultById = {}
+            for _, Result in next, self.Results do self.ResultById[tostring(Result.Id)] = Result end
+            local Cached = self.QueryCache[string.lower(self.CurrentQuery)]
+            if Cached then Cached.Index = self.PageIndex end
+            Results.CanvasPosition = Vector2.zero
+            self:RenderResults()
+        end
+
+        function Catalog:NextPage()
+            if self.PageBusy then return end
+            local NewIndex = (self.PageIndex or 1) + 1
+            if self.PageHistory and self.PageHistory[NewIndex] then
+                self.PageIndex = NewIndex
+                self.Results = table.clone(self.PageHistory[NewIndex])
+                self.ResultById = {}
+                for _, Result in next, self.Results do self.ResultById[tostring(Result.Id)] = Result end
+                local Cached = self.QueryCache[string.lower(self.CurrentQuery)]
+                if Cached then Cached.Index = NewIndex end
+                Results.CanvasPosition = Vector2.zero
+                self:RenderResults()
+                return
+            end
             local Pages = self.CurrentPages
-            if not Pages or Pages.IsFinished then MoreButton.Visible = false return end
-            MoreButton.Text = "Loading..."
+            if not Pages or Pages.IsFinished then self:UpdatePageControls() return end
+            self.PageBusy = true
+            self:UpdatePageControls()
+            local Generation = self.SearchGeneration
             task.spawn(function()
-                local Success = pcall(Pages.AdvanceToNextPageAsync, Pages)
+                local Success, Page = pcall(function()
+                    Pages:AdvanceToNextPageAsync()
+                    return Pages:GetCurrentPage()
+                end)
+                if Generation ~= self.SearchGeneration or self.CurrentPages ~= Pages then return end
                 if Success then
-                    self:AppendPage(Pages:GetCurrentPage())
-                    local CacheKey = string.lower(self.CurrentQuery)
-                    self.QueryCache[CacheKey] = {Results = table.clone(self.Results), Pages = Pages}
+                    self.Results = {}
+                    self.ResultById = {}
+                    self:AppendPage(Page)
+                    self.PageIndex = NewIndex
+                    self.PageHistory[NewIndex] = table.clone(self.Results)
+                    self.QueryCache[string.lower(self.CurrentQuery)] = {Results = table.clone(self.Results), Pages = Pages, History = self.PageHistory, Index = NewIndex}
+                    Results.CanvasPosition = Vector2.zero
                     self:RenderResults()
                 else
-                    StatusLabel.Text = "Couldn't load more animation packs"
+                    StatusLabel.Text = "Couldn't load page: " .. tostring(Page):sub(1, 100)
                 end
-                MoreButton.Text = "Load More"
-                MoreButton.Visible = not Pages.IsFinished
+                self.PageBusy = false
+                self:UpdatePageControls()
             end)
         end
 
@@ -7389,7 +7510,8 @@ do
 
         Library:GiveSignal(DisplayButton.MouseButton1Click:Connect(function() Catalog:Open() end))
         Library:GiveSignal(CloseButton.MouseButton1Click:Connect(function() Catalog:Close() end))
-        Library:GiveSignal(MoreButton.MouseButton1Click:Connect(function() Catalog:LoadMore() end))
+        Library:GiveSignal(PreviousButton.MouseButton1Click:Connect(function() Catalog:PreviousPage() end))
+        Library:GiveSignal(NextButton.MouseButton1Click:Connect(function() Catalog:NextPage() end))
         Library:GiveSignal(EquipButton.MouseButton1Click:Connect(function() Catalog:EquipSelected() end))
         Library:GiveSignal(RestoreButton.MouseButton1Click:Connect(function()
             Catalog:Restore()
