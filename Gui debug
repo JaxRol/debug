@@ -6620,6 +6620,13 @@ do
             AnimateWasDisabled = nil,
             OriginalSlots = {},
             Cards = {},
+            PreviewGeneration = 0,
+            PreviewViewport = nil,
+            PreviewCard = nil,
+            PreviewTrack = nil,
+            PreviewAnimation = nil,
+            PreviewModel = nil,
+            PreviewSlots = {"Idle1", "Walk", "Run", "Jump", "Fall", "Climb", "Swim", "SwimIdle"},
             SlotOrder = {"Idle1", "Idle2", "Walk", "Run", "Jump", "Fall", "Climb", "Swim", "SwimIdle"},
             SlotPaths = {
                 Idle1 = {Container = "idle", Animation = "Animation1"},
@@ -7170,10 +7177,168 @@ do
             return true
         end
 
+        function Catalog:StopPreview()
+            self.PreviewGeneration += 1
+            if self.PreviewTrack then
+                pcall(self.PreviewTrack.Stop, self.PreviewTrack, 0)
+                pcall(self.PreviewTrack.Destroy, self.PreviewTrack)
+            end
+            if self.PreviewAnimation and self.PreviewAnimation.Parent then pcall(self.PreviewAnimation.Destroy, self.PreviewAnimation) end
+            if self.PreviewCard and self.PreviewCard.Image and self.PreviewCard.Image.Parent then self.PreviewCard.Image.Visible = true end
+            if self.PreviewViewport and self.PreviewViewport.Parent then self.PreviewViewport:Destroy() end
+            self.PreviewViewport = nil
+            self.PreviewCard = nil
+            self.PreviewTrack = nil
+            self.PreviewAnimation = nil
+            self.PreviewModel = nil
+        end
+
+        function Catalog:CreatePreviewRig(World)
+            local Character = LocalPlayer.Character
+            if not Character or not Character.Parent then return nil, nil, nil, "Avatar is not ready" end
+            local PreviousArchivable = Character.Archivable
+            Character.Archivable = true
+            local Clone
+            local Success, ErrorMessage = pcall(function() Clone = Character:Clone() end)
+            Character.Archivable = PreviousArchivable
+            if not Success or not Clone then return nil, nil, nil, tostring(ErrorMessage or "Avatar could not be cloned") end
+            Clone.Name = "AnimationPreviewAvatar"
+            for _, Object in next, Clone:GetDescendants() do
+                if Object:IsA("Script") or Object:IsA("LocalScript") or Object:IsA("ModuleScript") or Object:IsA("Tool") then
+                    Object:Destroy()
+                elseif Object:IsA("BasePart") then
+                    Object.CanCollide = false
+                    Object.CanTouch = false
+                    Object.CanQuery = false
+                    Object.AssemblyLinearVelocity = Vector3.zero
+                    Object.AssemblyAngularVelocity = Vector3.zero
+                end
+            end
+            local Humanoid = Clone:FindFirstChildOfClass("Humanoid")
+            if not Humanoid then Clone:Destroy() return nil, nil, nil, "Avatar humanoid was not found" end
+            local OldAnimator = Humanoid:FindFirstChildOfClass("Animator")
+            if OldAnimator then OldAnimator:Destroy() end
+            local Animator = Instance.new("Animator")
+            Animator.Parent = Humanoid
+            Humanoid.AutoRotate = false
+            pcall(function() Humanoid.DisplayDistanceType = Enum.HumanoidDisplayDistanceType.None end)
+            pcall(function() Humanoid.HealthDisplayType = Enum.HumanoidHealthDisplayType.AlwaysOff end)
+            local Root = Clone:FindFirstChild("HumanoidRootPart")
+            if Root then Root.Anchored = true end
+            Clone:PivotTo(CFrame.new())
+            Clone.Parent = World
+            return Clone, Humanoid, Animator
+        end
+
+        function Catalog:StartPreview(Result)
+            local BundleId = self:NormalizeAssetId(Result and (Result.Id or Result.id))
+            local Card = BundleId and self.Cards[BundleId]
+            self:StopPreview()
+            if not BundleId or not Card or not Card.Frame or not Card.Frame.Parent then return end
+            self.PreviewGeneration += 1
+            local Generation = self.PreviewGeneration
+            if Card.Image and Card.Image.Parent then Card.Image.Visible = false end
+            local Viewport = New("ViewportFrame", {
+                Ambient = Color3.fromRGB(190, 190, 190),
+                BackgroundColor3 = "BackgroundColor",
+                BorderSizePixel = 0,
+                LightColor = Color3.fromRGB(255, 255, 255),
+                LightDirection = Vector3.new(-1, -1, -1),
+                Position = UDim2.fromOffset(7, 7),
+                Size = UDim2.new(1, -14, 1, -48),
+                ZIndex = 63,
+                Parent = Card.Frame,
+            })
+            New("UICorner", {CornerRadius = UDim.new(0, math.max(Library.CornerRadius - 1, 0)), Parent = Viewport})
+            local World = Instance.new("WorldModel")
+            World.Parent = Viewport
+            local Camera = Instance.new("Camera")
+            Camera.FieldOfView = 32
+            Camera.Parent = Viewport
+            Viewport.CurrentCamera = Camera
+            local PreviewLabel = New("TextLabel", {
+                BackgroundColor3 = "MainColor",
+                BackgroundTransparency = 0.15,
+                AnchorPoint = Vector2.new(0.5, 1),
+                Position = UDim2.new(0.5, 0, 1, -5),
+                Size = UDim2.new(1, -10, 0, 20),
+                Text = "Loading preview...",
+                TextSize = 10,
+                TextTruncate = Enum.TextTruncate.AtEnd,
+                ZIndex = 66,
+                Parent = Viewport,
+            })
+            New("UICorner", {CornerRadius = UDim.new(0, math.max(Library.CornerRadius - 2, 0)), Parent = PreviewLabel})
+            self.PreviewViewport = Viewport
+            self.PreviewCard = Card
+            task.spawn(function()
+                local Pack, ErrorMessage = self:ResolvePack(Result)
+                if Generation ~= self.PreviewGeneration or self.PreviewViewport ~= Viewport or not Viewport.Parent then return end
+                if not Pack then
+                    PreviewLabel.Text = "Preview unavailable"
+                    warn("Animation preview failed:", ErrorMessage)
+                    return
+                end
+                local Clone, Humanoid, Animator, RigError = self:CreatePreviewRig(World)
+                if Generation ~= self.PreviewGeneration or self.PreviewViewport ~= Viewport or not Viewport.Parent then
+                    if Clone then Clone:Destroy() end
+                    return
+                end
+                if not Clone or not Animator then
+                    PreviewLabel.Text = "Avatar preview unavailable"
+                    warn("Animation avatar preview failed:", RigError)
+                    return
+                end
+                self.PreviewModel = Clone
+                local BoxCFrame, BoxSize = Clone:GetBoundingBox()
+                local Center = BoxCFrame.Position + Vector3.new(0, BoxSize.Y * 0.05, 0)
+                local Distance = math.max(BoxSize.X, BoxSize.Y, BoxSize.Z) * 1.55
+                Camera.CFrame = CFrame.lookAt(Center + Vector3.new(Distance * 0.08, BoxSize.Y * 0.03, -Distance), Center)
+                local Slots = {}
+                for _, SlotKey in next, self.PreviewSlots do
+                    if Pack[SlotKey] then table.insert(Slots, SlotKey) end
+                end
+                if #Slots == 0 then PreviewLabel.Text = "No previewable animations" return end
+                local SlotNames = {Idle1 = "Idle", Walk = "Walk", Run = "Run", Jump = "Jump", Fall = "Fall", Climb = "Climb", Swim = "Swim", SwimIdle = "Swim Idle"}
+                while Generation == self.PreviewGeneration and self.PreviewViewport == Viewport and Viewport.Parent do
+                    for _, SlotKey in next, Slots do
+                        if Generation ~= self.PreviewGeneration or self.PreviewViewport ~= Viewport or not Viewport.Parent then return end
+                        if self.PreviewTrack then
+                            pcall(self.PreviewTrack.Stop, self.PreviewTrack, 0.12)
+                            pcall(self.PreviewTrack.Destroy, self.PreviewTrack)
+                            self.PreviewTrack = nil
+                        end
+                        if self.PreviewAnimation and self.PreviewAnimation.Parent then self.PreviewAnimation:Destroy() end
+                        local Animation = Instance.new("Animation")
+                        Animation.AnimationId = "rbxassetid://" .. tostring(Pack[SlotKey])
+                        Animation.Parent = Viewport
+                        local Track
+                        local Loaded, LoadError = pcall(function() Track = Animator:LoadAnimation(Animation) end)
+                        if Loaded and Track then
+                            self.PreviewAnimation = Animation
+                            self.PreviewTrack = Track
+                            Track.Looped = true
+                            Track.Priority = Enum.AnimationPriority.Action
+                            PreviewLabel.Text = SlotNames[SlotKey] or SlotKey
+                            pcall(Track.Play, Track, 0.12, 1, 1)
+                            local Elapsed = 0
+                            while Elapsed < 2.35 and Generation == self.PreviewGeneration and self.PreviewViewport == Viewport and Viewport.Parent do
+                                Elapsed += task.wait(0.1)
+                            end
+                        else
+                            Animation:Destroy()
+                            warn("Animation preview track failed:", LoadError)
+                        end
+                    end
+                end
+            end)
+        end
+
         function Catalog:SelectResult(Result)
             self.SelectedResult = Result
             self:Display()
             self:RefreshCards()
+            self:StartPreview(Result)
         end
 
         function Catalog:EquipSelected()
@@ -7216,6 +7381,7 @@ do
         end
 
         function Catalog:ClearCards()
+            self:StopPreview()
             for _, Card in next, self.Cards do
                 if Card.Frame and Card.Frame.Parent then Card.Frame:Destroy() end
             end
@@ -7279,7 +7445,7 @@ do
                 Parent = Card,
             })
             New("UICorner", {CornerRadius = UDim.new(0, Library.CornerRadius), Parent = Badge})
-            self.Cards[BundleId] = {Frame = Card, Stroke = Stroke, Badge = Badge}
+            self.Cards[BundleId] = {Frame = Card, Stroke = Stroke, Badge = Badge, Image = Image}
             Library:GiveSignal(Card.MouseButton1Click:Connect(function()
                 if not self.Disabled then self:SelectResult(Result) end
             end))
@@ -7304,6 +7470,8 @@ do
             self:UpdateGrid()
             for Index, Result in next, self.Results do self:CreateCard(Result, Index) end
             self:RefreshCards()
+            local SelectedId = self.SelectedResult and self:NormalizeAssetId(self.SelectedResult.Id or self.SelectedResult.id)
+            if SelectedId and self.Cards[SelectedId] then self:StartPreview(self.SelectedResult) end
             if #self.Results == 0 then
                 StatusLabel.Text = self.CurrentQuery ~= "" and ("No animation packs found for \"" .. self.CurrentQuery .. "\"") or "No animation packs found"
             else
@@ -7495,6 +7663,7 @@ do
         end
 
         function Catalog:Close()
+            self:StopPreview()
             Overlay.Visible = false
             SearchBox:ReleaseFocus()
             Arrow.Text = "›"
@@ -7524,9 +7693,16 @@ do
             Library:GiveSignal(ContentFrame:GetPropertyChangedSignal("Size"):Connect(function() if Overlay.Visible then Catalog:UpdateOverlayBounds() end end))
         end
         Library:OnUnload(function()
+            Catalog:StopPreview()
             if Catalog.Enabled then Catalog:Restore() end
         end)
         Library:GiveSignal(LocalPlayer.CharacterAdded:Connect(function(Character)
+            if Overlay.Visible and Catalog.SelectedResult then
+                local SelectedResult = Catalog.SelectedResult
+                task.delay(0.75, function()
+                    if Overlay.Visible and Catalog.SelectedResult == SelectedResult and LocalPlayer.Character == Character then Catalog:StartPreview(SelectedResult) end
+                end)
+            end
             if not Catalog.KeepOnRespawn or not Catalog.Enabled or not Catalog.EquippedPack then return end
             local Pack = Catalog.EquippedPack
             task.delay(0.75, function()
