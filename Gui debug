@@ -8657,6 +8657,7 @@ do
         local Container = Groupbox.Container
         local AvatarEditorService = cloneref(game:GetService("AvatarEditorService"))
         local HttpService = cloneref(game:GetService("HttpService"))
+        local InsertService = cloneref(game:GetService("InsertService"))
         local PlayersService = cloneref(game:GetService("Players"))
         local LocalPlayer = PlayersService.LocalPlayer
 
@@ -8683,6 +8684,8 @@ do
             ResultById = {},
             Cards = {},
             QueryCache = {},
+            EmoteAnimationIdCache = {},
+            EmoteResolveBusy = false,
             CurrentPages = nil,
             CurrentQuery = "",
             SearchGeneration = 0,
@@ -9071,63 +9074,128 @@ do
             end
         end
 
+        function Catalog:ResolveEmoteAnimationId(CatalogId)
+            CatalogId = self:NormalizeAssetId(CatalogId)
+            if not CatalogId then return nil, "Invalid emote ID" end
+
+            if self.EmoteAnimationIdCache[CatalogId] ~= nil then
+                local Cached = self.EmoteAnimationIdCache[CatalogId]
+                return Cached or nil, Cached and nil or "Playable emote animation could not be resolved"
+            end
+
+            while self.EmoteResolveBusy do
+                task.wait()
+
+                if self.EmoteAnimationIdCache[CatalogId] ~= nil then
+                    local Cached = self.EmoteAnimationIdCache[CatalogId]
+                    return Cached or nil, Cached and nil or "Playable emote animation could not be resolved"
+                end
+            end
+
+            self.EmoteResolveBusy = true
+
+            local ResolvedId
+
+            local function Scan(Object)
+                if not Object or typeof(Object) ~= "Instance" then return end
+
+                if Object:IsA("Animation") then
+                    local AnimationId = self:NormalizeAssetId(Object.AnimationId)
+                    if AnimationId and AnimationId ~= CatalogId then
+                        ResolvedId = AnimationId
+                        return
+                    end
+                end
+
+                local Success, Descendants = pcall(Object.GetDescendants, Object)
+                if not Success or type(Descendants) ~= "table" then return end
+
+                for _, Descendant in next, Descendants do
+                    if Descendant:IsA("Animation") then
+                        local AnimationId = self:NormalizeAssetId(Descendant.AnimationId)
+                        if AnimationId and AnimationId ~= CatalogId then
+                            ResolvedId = AnimationId
+                            return
+                        end
+                    end
+                end
+            end
+
+            local function TryGetObjects(Source)
+                local Success, Objects = pcall(game.GetObjects, game, Source)
+
+                if Success and type(Objects) == "table" then
+                    for _, Object in next, Objects do
+                        if not ResolvedId then Scan(Object) end
+                    end
+
+                    for _, Object in next, Objects do
+                        if typeof(Object) == "Instance" then
+                            pcall(Object.Destroy, Object)
+                        end
+                    end
+                end
+
+                return ResolvedId ~= nil
+            end
+
+            -- Executor-friendly path first.
+            TryGetObjects("rbxassetid://" .. CatalogId)
+
+            if not ResolvedId then
+                TryGetObjects("https://www.roblox.com/asset/?id=" .. CatalogId)
+            end
+
+            -- Roblox emotes are commonly model/wrapper assets containing an Animation.
+            -- InsertService is a fallback because some executors expose LoadAsset client-side.
+            if not ResolvedId and InsertService then
+                local Success, Model = pcall(InsertService.LoadAsset, InsertService, tonumber(CatalogId))
+
+                if Success and typeof(Model) == "Instance" then
+                    Scan(Model)
+                    pcall(Model.Destroy, Model)
+                end
+            end
+
+            self.EmoteResolveBusy = false
+
+            if not ResolvedId then
+                self.EmoteAnimationIdCache[CatalogId] = false
+                return nil, "Playable emote animation could not be resolved"
+            end
+
+            self.EmoteAnimationIdCache[CatalogId] = ResolvedId
+            return ResolvedId
+        end
+
         function Catalog:PlayPreviewEmote(Model, Animator, Result)
-            local AssetId = self:NormalizeAssetId(Result and (Result.Id or Result.id))
-            if not AssetId or not Model or not Model.Parent or not Animator or not Animator.Parent then
+            local CatalogId = self:NormalizeAssetId(Result and (Result.Id or Result.id))
+            if not CatalogId or not Model or not Model.Parent or not Animator or not Animator.Parent then
                 return nil, "Preview avatar is not ready"
             end
 
-            local Humanoid = Model:FindFirstChildOfClass("Humanoid")
-            if not Humanoid then return nil, "Preview humanoid was not found" end
+            local AnimationId, ResolveError = self:ResolveEmoteAnimationId(CatalogId)
+            if not AnimationId then return nil, ResolveError end
 
-            local Description = Humanoid:FindFirstChildOfClass("HumanoidDescription")
-            if not Description then
-                local Success, AppliedDescription = pcall(Humanoid.GetAppliedDescription, Humanoid)
-                if Success and AppliedDescription then
-                    AppliedDescription.Name = "HumanoidDescription"
-                    AppliedDescription.Parent = Humanoid
-                    Description = AppliedDescription
-                end
+            local Animation = Instance.new("Animation")
+            Animation.Name = "ZeroPointEmotePreview"
+            Animation.AnimationId = "rbxassetid://" .. AnimationId
+
+            local Track
+            local Success, ErrorMessage = pcall(function()
+                Track = Animator:LoadAnimation(Animation)
+            end)
+
+            if not Success or not Track then
+                Animation:Destroy()
+                return nil, tostring(ErrorMessage or "Preview animation could not be loaded")
             end
 
-            if not Description then return nil, "Preview HumanoidDescription was not available" end
+            Track.Looped = true
+            Track.Priority = Enum.AnimationPriority.Action4
+            Track:Play(0.08, 1, 1)
 
-            local EmoteName = "ZeroPointPreviewEmote"
-            local Success, Emotes = pcall(Description.GetEmotes, Description)
-            if not Success or type(Emotes) ~= "table" then
-                return nil, "Preview emote list could not be read"
-            end
-
-            -- Always overwrite one fixed preview slot so browsing many emotes never
-            -- grows the HumanoidDescription's emote table.
-            Emotes[EmoteName] = {tonumber(AssetId)}
-
-            Success = pcall(Description.SetEmotes, Description, Emotes)
-            if not Success then return nil, "Preview emote could not be registered" end
-
-            local ExistingTracks = {}
-            for _, Track in next, Animator:GetPlayingAnimationTracks() do
-                ExistingTracks[Track] = true
-            end
-
-            local PlaySuccess, Played = pcall(Humanoid.PlayEmoteAsync, Humanoid, EmoteName)
-            if not PlaySuccess or Played ~= true then
-                return nil, "Roblox could not play this catalog emote"
-            end
-
-            local StartedAt = os.clock()
-            repeat
-                for _, Track in next, Animator:GetPlayingAnimationTracks() do
-                    if not ExistingTracks[Track] then
-                        Track.Looped = true
-                        Track.Priority = Enum.AnimationPriority.Action4
-                        return Track
-                    end
-                end
-                RunService.Heartbeat:Wait()
-            until os.clock() - StartedAt >= 1.5
-
-            return nil, "Emote track did not start"
+            return Track, nil, Animation
         end
 
         function Catalog:StopPreview(DestroyViewport)
@@ -9247,13 +9315,14 @@ do
             self.PreviewLabel.Text = "Loading emote..."
 
             task.spawn(function()
-                local Track, ErrorMessage = self:PlayPreviewEmote(self.PreviewModel, Animator, Result)
+                local Track, ErrorMessage, Animation = self:PlayPreviewEmote(self.PreviewModel, Animator, Result)
 
                 if Generation ~= self.PreviewGeneration then
                     if Track then
                         pcall(Track.Stop, Track, 0)
                         pcall(Track.Destroy, Track)
                     end
+                    if Animation and Animation.Parent then pcall(Animation.Destroy, Animation) end
                     return
                 end
 
@@ -9264,7 +9333,7 @@ do
                 end
 
                 self.PreviewTrack = Track
-                self.PreviewAnimation = nil
+                self.PreviewAnimation = Animation
                 self.PreviewLabel.Text = "Emote"
             end)
         end
@@ -9533,13 +9602,14 @@ do
             self:FramePreviewCamera(self.FullPreviewModel, self.FullPreviewCamera, true)
 
             task.spawn(function()
-                local Track, LoadError = self:PlayPreviewEmote(self.FullPreviewModel, self.FullPreviewAnimator, Result)
+                local Track, LoadError, Animation = self:PlayPreviewEmote(self.FullPreviewModel, self.FullPreviewAnimator, Result)
 
                 if Generation ~= self.FullPreviewGeneration or not self.FullPreviewOpen then
                     if Track then
                         pcall(Track.Stop, Track, 0)
                         pcall(Track.Destroy, Track)
                     end
+                    if Animation and Animation.Parent then pcall(Animation.Destroy, Animation) end
                     return
                 end
 
@@ -9550,7 +9620,7 @@ do
                 end
 
                 self.FullPreviewTrack = Track
-                self.FullPreviewAnimation = nil
+                self.FullPreviewAnimation = Animation
                 self.FullPreviewStatus.Text = Library.IsMobile and "Drag to rotate" or "Drag to rotate • mouse wheel to zoom"
             end)
         end
