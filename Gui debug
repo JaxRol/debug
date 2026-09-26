@@ -8651,6 +8651,1353 @@ do
         return Catalog
     end
 
+    function Funcs:AddEmoteCatalog(Idx, Info)
+        Info = Info or {}
+        local Groupbox = self
+        local Container = Groupbox.Container
+        local AvatarEditorService = cloneref(game:GetService("AvatarEditorService"))
+        local HttpService = cloneref(game:GetService("HttpService"))
+        local PlayersService = cloneref(game:GetService("Players"))
+        local LocalPlayer = PlayersService.LocalPlayer
+
+        local RequestedPageSize = tonumber(Info.PageSize)
+        local PageSize = (RequestedPageSize == 10 or RequestedPageSize == 28 or RequestedPageSize == 30) and RequestedPageSize or 10
+
+        local Catalog = {
+            Text = typeof(Info.Text) == "string" and Info.Text or "Roblox Emotes",
+            Placeholder = typeof(Info.Placeholder) == "string" and Info.Placeholder or "Browse Roblox emotes...",
+            SearchPlaceholder = typeof(Info.SearchPlaceholder) == "string" and Info.SearchPlaceholder or "Search Roblox emotes...",
+            PageSize = PageSize,
+            SearchDebounce = math.max(tonumber(Info.SearchDebounce) or 0.3, 0),
+            PreviewDelay = math.max(tonumber(Info.PreviewDelay) or 0.03, 0),
+            DoubleTapWindow = math.max(tonumber(Info.DoubleTapWindow) or 0.34, 0.2),
+            Callback = Info.Callback or function() end,
+            Changed = Info.Changed or function() end,
+            Disabled = Library:GetDisabledState(Info.Disabled),
+            Visible = Info.Visible ~= false,
+            Type = "EmoteCatalog",
+            Value = nil,
+            SelectedResult = nil,
+            AppliedResult = nil,
+            Results = {},
+            ResultById = {},
+            Cards = {},
+            QueryCache = {},
+            CurrentPages = nil,
+            CurrentQuery = "",
+            SearchGeneration = 0,
+            PageIndex = 1,
+            PageHistory = nil,
+            PageBusy = false,
+            PreviewGeneration = 0,
+            PreviewViewport = nil,
+            PreviewWorld = nil,
+            PreviewCamera = nil,
+            PreviewLabel = nil,
+            PreviewModel = nil,
+            PreviewAnimator = nil,
+            PreviewTrack = nil,
+            PreviewAnimation = nil,
+            PreviewCard = nil,
+            CardTapId = nil,
+            CardTapTime = 0,
+            FullPreviewGeneration = 0,
+            FullPreviewOpen = false,
+            FullPreviewOverlay = nil,
+            FullPreviewViewport = nil,
+            FullPreviewWorld = nil,
+            FullPreviewCamera = nil,
+            FullPreviewTitle = nil,
+            FullPreviewStatus = nil,
+            FullPreviewModel = nil,
+            FullPreviewAnimator = nil,
+            FullPreviewTrack = nil,
+            FullPreviewAnimation = nil,
+            FullPreviewResult = nil,
+            FullPreviewCharacter = nil,
+            FullPreviewDragging = false,
+            FullPreviewDragInput = nil,
+            FullPreviewLastPosition = nil,
+            FullPreviewYaw = 0,
+            FullPreviewPitch = 0,
+            FullPreviewDistance = 8,
+            FullPreviewMinDistance = 3,
+            FullPreviewMaxDistance = 18,
+            FullPreviewCenter = Vector3.zero,
+        }
+
+        local Holder = New("Frame", {
+            BackgroundTransparency = 1,
+            Size = UDim2.new(1, 0, 0, Catalog.Text and 39 or 21),
+            Visible = Catalog.Visible,
+            Parent = Container,
+        })
+
+        local Label = New("TextLabel", {
+            BackgroundTransparency = 1,
+            Size = UDim2.new(1, 0, 0, 14),
+            Text = Catalog.Text,
+            TextSize = 14,
+            TextXAlignment = Enum.TextXAlignment.Left,
+            ZIndex = 3,
+            Parent = Holder,
+        })
+
+        local DisplayButton = New("TextButton", {
+            BackgroundColor3 = "MainColor",
+            Position = UDim2.new(0, 0, 0, Catalog.Text and 18 or 0),
+            Size = UDim2.new(1, 0, 0, 21),
+            Text = "",
+            ZIndex = 3,
+            Parent = Holder,
+        })
+        Library:AddOutline(DisplayButton)
+        New("UICorner", {CornerRadius = UDim.new(0, Library.CornerRadius), Parent = DisplayButton})
+
+        local DisplayText = New("TextLabel", {
+            BackgroundTransparency = 1,
+            Position = UDim2.fromOffset(7, 0),
+            Size = UDim2.new(1, -30, 1, 0),
+            Text = Catalog.Placeholder,
+            TextSize = 13,
+            TextTruncate = Enum.TextTruncate.AtEnd,
+            TextXAlignment = Enum.TextXAlignment.Left,
+            ZIndex = 4,
+            Parent = DisplayButton,
+        })
+
+        local Arrow = New("TextLabel", {
+            BackgroundTransparency = 1,
+            AnchorPoint = Vector2.new(1, 0),
+            Position = UDim2.new(1, -7, 0, 0),
+            Size = UDim2.fromOffset(16, 21),
+            Text = "›",
+            TextSize = 18,
+            TextXAlignment = Enum.TextXAlignment.Right,
+            ZIndex = 4,
+            Parent = DisplayButton,
+        })
+
+        local ContentFrame = Groupbox.BoxHolder and Groupbox.BoxHolder.Parent or Container.Parent
+        local TabContainer = ContentFrame and ContentFrame.Parent
+        assert(TabContainer, "Emote catalog could not resolve the subpage container")
+
+        local Overlay = New("Frame", {
+            Active = true,
+            BackgroundColor3 = "BackgroundColor",
+            BorderSizePixel = 0,
+            Visible = false,
+            ZIndex = 60,
+            Parent = TabContainer,
+        })
+        Library:AddOutline(Overlay)
+        New("UICorner", {CornerRadius = UDim.new(0, Library.CornerRadius), Parent = Overlay})
+
+        local SearchBoxHolder = New("Frame", {
+            BackgroundColor3 = "MainColor",
+            Position = UDim2.fromOffset(8, 8),
+            Size = UDim2.new(1, -60, 0, 32),
+            ZIndex = 62,
+            Parent = Overlay,
+        })
+        Library:AddOutline(SearchBoxHolder)
+        New("UICorner", {CornerRadius = UDim.new(0, Library.CornerRadius), Parent = SearchBoxHolder})
+
+        local SearchBox = New("TextBox", {
+            BackgroundTransparency = 1,
+            ClearTextOnFocus = false,
+            Position = UDim2.fromOffset(8, 0),
+            Size = UDim2.new(1, -16, 1, 0),
+            PlaceholderText = Catalog.SearchPlaceholder,
+            Text = "",
+            TextSize = 13,
+            TextXAlignment = Enum.TextXAlignment.Left,
+            ZIndex = 63,
+            Parent = SearchBoxHolder,
+        })
+
+        local CloseButton = New("TextButton", {
+            BackgroundColor3 = "MainColor",
+            AnchorPoint = Vector2.new(1, 0),
+            Position = UDim2.new(1, -8, 0, 8),
+            Size = UDim2.fromOffset(36, 32),
+            Text = "×",
+            TextSize = 18,
+            ZIndex = 62,
+            Parent = Overlay,
+        })
+        Library:AddOutline(CloseButton)
+        New("UICorner", {CornerRadius = UDim.new(0, Library.CornerRadius), Parent = CloseButton})
+
+        local PreviousButton = New("TextButton", {
+            BackgroundColor3 = "MainColor",
+            Position = UDim2.new(0, 8, 0, 46),
+            Size = UDim2.new(0.5, -12, 0, 30),
+            Text = "Previous",
+            TextSize = 13,
+            ZIndex = 62,
+            Parent = Overlay,
+        })
+        Library:AddOutline(PreviousButton)
+        New("UICorner", {CornerRadius = UDim.new(0, Library.CornerRadius), Parent = PreviousButton})
+
+        local NextButton = New("TextButton", {
+            BackgroundColor3 = "MainColor",
+            Position = UDim2.new(0.5, 4, 0, 46),
+            Size = UDim2.new(0.5, -12, 0, 30),
+            Text = "Next",
+            TextSize = 13,
+            ZIndex = 62,
+            Parent = Overlay,
+        })
+        Library:AddOutline(NextButton)
+        New("UICorner", {CornerRadius = UDim.new(0, Library.CornerRadius), Parent = NextButton})
+
+        local StatusLabel = New("TextLabel", {
+            BackgroundTransparency = 1,
+            Position = UDim2.fromOffset(9, 80),
+            Size = UDim2.new(1, -18, 0, 18),
+            Text = "Search Roblox emotes",
+            TextSize = 12,
+            TextTransparency = 0.25,
+            TextTruncate = Enum.TextTruncate.AtEnd,
+            TextXAlignment = Enum.TextXAlignment.Left,
+            ZIndex = 62,
+            Parent = Overlay,
+        })
+
+        local Results = New("ScrollingFrame", {
+            Active = true,
+            AutomaticCanvasSize = Enum.AutomaticSize.Y,
+            BackgroundTransparency = 1,
+            BorderSizePixel = 0,
+            CanvasSize = UDim2.new(),
+            Position = UDim2.fromOffset(8, 101),
+            ScrollBarImageColor3 = "AccentColor",
+            ScrollBarThickness = Library.IsMobile and 5 or 3,
+            Size = UDim2.new(1, -16, 1, -159),
+            ZIndex = 61,
+            Parent = Overlay,
+        })
+
+        local Grid = New("UIGridLayout", {
+            CellPadding = UDim2.fromOffset(8, 8),
+            CellSize = UDim2.fromOffset(140, 174),
+            FillDirection = Enum.FillDirection.Horizontal,
+            HorizontalAlignment = Enum.HorizontalAlignment.Center,
+            SortOrder = Enum.SortOrder.LayoutOrder,
+            Parent = Results,
+        })
+
+        New("UIPadding", {
+            PaddingTop = UDim.new(0, 4),
+            PaddingBottom = UDim.new(0, 8),
+            PaddingLeft = UDim.new(0, 2),
+            PaddingRight = UDim.new(0, 2),
+            Parent = Results,
+        })
+
+        if Library.MakeDragScrollable then Library:MakeDragScrollable(Results) end
+
+        local Footer = New("Frame", {
+            BackgroundColor3 = "MainColor",
+            AnchorPoint = Vector2.new(0, 1),
+            Position = UDim2.new(0, 8, 1, -8),
+            Size = UDim2.new(1, -16, 0, 48),
+            ZIndex = 62,
+            Parent = Overlay,
+        })
+        Library:AddOutline(Footer)
+        New("UICorner", {CornerRadius = UDim.new(0, Library.CornerRadius), Parent = Footer})
+
+        local SelectionLabel = New("TextLabel", {
+            BackgroundTransparency = 1,
+            Position = UDim2.fromOffset(8, 0),
+            Size = UDim2.new(1, -112, 1, 0),
+            Text = "Selected: none",
+            TextSize = 12,
+            TextTruncate = Enum.TextTruncate.AtEnd,
+            TextXAlignment = Enum.TextXAlignment.Left,
+            ZIndex = 63,
+            Parent = Footer,
+        })
+
+        local UseButton = New("TextButton", {
+            BackgroundColor3 = "AccentColor",
+            AnchorPoint = Vector2.new(1, 0.5),
+            Position = UDim2.new(1, -8, 0.5, 0),
+            Size = UDim2.fromOffset(90, 30),
+            Text = "Use",
+            TextSize = 12,
+            ZIndex = 63,
+            Parent = Footer,
+        })
+        Library:AddOutline(UseButton)
+        New("UICorner", {CornerRadius = UDim.new(0, Library.CornerRadius), Parent = UseButton})
+
+        function Catalog:NormalizeAssetId(Value)
+            if type(Value) == "number" then
+                if Value <= 0 then return nil end
+                return string.format("%.0f", Value)
+            end
+            local AssetId = tostring(Value or ""):match("%d+")
+            if not AssetId or AssetId == "0" then return nil end
+            return AssetId
+        end
+
+        function Catalog:Notify(Title, Description)
+            if Library.Notify then Library:Notify({Title = Title, Description = Description, Time = 4}) end
+        end
+
+        function Catalog:UpdateOverlayBounds()
+            if not ContentFrame or not ContentFrame.Parent then return end
+            local Y = ContentFrame.Position.Y
+            Overlay.Position = UDim2.new(0, 0, Y.Scale, Y.Offset)
+            Overlay.Size = UDim2.new(1, 0, 1 - Y.Scale, -Y.Offset)
+        end
+
+        function Catalog:UpdateGrid()
+            local Scale = tonumber(Library.DPIScale) or 1
+            if Scale <= 0 then Scale = 1 end
+            local Width = math.max(Results.AbsoluteSize.X / Scale, 240)
+            local Columns = Width < 420 and 2 or (Width < 650 and 3 or 4)
+            local Padding = 8
+            local CellWidth = math.floor((Width - ((Columns - 1) * Padding) - 8) / Columns)
+            CellWidth = math.clamp(CellWidth, 106, 190)
+            Grid.CellSize = UDim2.fromOffset(CellWidth, math.clamp(CellWidth + 42, 148, 220))
+        end
+
+        function Catalog:Display()
+            local DisplayResult = self.AppliedResult or self.SelectedResult
+            DisplayText.Text = DisplayResult and tostring(DisplayResult.Name) or self.Placeholder
+            SelectionLabel.Text = self.SelectedResult and ("Selected: " .. tostring(self.SelectedResult.Name)) or "Selected: none"
+        end
+
+        function Catalog:CreatePreviewRig(World)
+            local Character = LocalPlayer.Character
+            if not Character or not Character.Parent then return nil, nil, "Avatar is not ready" end
+
+            local PreviousArchivable = Character.Archivable
+            Character.Archivable = true
+            local Clone
+            local Success, ErrorMessage = pcall(function() Clone = Character:Clone() end)
+            Character.Archivable = PreviousArchivable
+
+            if not Success or not Clone then return nil, nil, tostring(ErrorMessage or "Avatar could not be cloned") end
+
+            Clone.Name = "EmotePreviewAvatar"
+
+            for _, Object in next, Clone:GetDescendants() do
+                if Object:IsA("Script") or Object:IsA("LocalScript") or Object:IsA("ModuleScript") or Object:IsA("Tool") then
+                    Object:Destroy()
+                elseif Object:IsA("BasePart") then
+                    Object.Anchored = false
+                    Object.CanCollide = false
+                    Object.CanTouch = false
+                    Object.CanQuery = false
+                    Object.LocalTransparencyModifier = 0
+                    Object.AssemblyLinearVelocity = Vector3.zero
+                    Object.AssemblyAngularVelocity = Vector3.zero
+                end
+            end
+
+            local Humanoid = Clone:FindFirstChildOfClass("Humanoid")
+            if not Humanoid then Clone:Destroy() return nil, nil, "Avatar humanoid was not found" end
+
+            local OldAnimator = Humanoid:FindFirstChildOfClass("Animator")
+            if OldAnimator then OldAnimator:Destroy() end
+
+            local Animator = Instance.new("Animator")
+            Animator.Parent = Humanoid
+            Humanoid.AutoRotate = false
+            pcall(function() Humanoid.DisplayDistanceType = Enum.HumanoidDisplayDistanceType.None end)
+            pcall(function() Humanoid.HealthDisplayType = Enum.HumanoidHealthDisplayType.AlwaysOff end)
+
+            local Root = Clone:FindFirstChild("HumanoidRootPart")
+            if Root then Root.Anchored = true end
+
+            Clone:PivotTo(CFrame.new())
+            Clone.Parent = World
+            return Clone, Animator
+        end
+
+        function Catalog:ResetRigAnimator(Model)
+            if not Model or not Model.Parent then return nil end
+            local Humanoid = Model:FindFirstChildOfClass("Humanoid")
+            if not Humanoid then return nil end
+
+            local Animator = Humanoid:FindFirstChildOfClass("Animator")
+            if Animator then pcall(Animator.Destroy, Animator) end
+
+            Animator = Instance.new("Animator")
+            Animator.Parent = Humanoid
+            return Animator
+        end
+
+        function Catalog:FramePreviewCamera(Model, Camera, FullPreview)
+            if not Model or not Model.Parent or not Camera then return end
+
+            local Root = Model:FindFirstChild("HumanoidRootPart")
+            local BoxCFrame, BoxSize = Model:GetBoundingBox()
+            local Height = math.clamp(BoxSize.Y, 4, 9)
+            local Width = math.clamp(math.max(BoxSize.X, BoxSize.Z), 2, 7)
+            local Center = Root and (Root.Position + Vector3.new(0, Height * 0.08, 0)) or BoxCFrame.Position
+            local Distance = math.max(Height * 1.15, Width * 1.3, 5.5)
+
+            Camera.FieldOfView = 32
+
+            if FullPreview then
+                self.FullPreviewCenter = Center
+                self.FullPreviewDistance = Distance
+                self.FullPreviewMinDistance = math.max(Distance * 0.55, 2.5)
+                self.FullPreviewMaxDistance = math.max(Distance * 2.5, self.FullPreviewMinDistance + 1)
+                self.FullPreviewYaw = 0
+                self.FullPreviewPitch = 0
+                self:UpdateFullPreviewCamera()
+            else
+                Camera.CFrame = CFrame.lookAt(Center + Vector3.new(Distance * 0.06, Height * 0.02, -Distance), Center)
+            end
+        end
+
+        function Catalog:StopPreview(DestroyViewport)
+            self.PreviewGeneration += 1
+
+            if self.PreviewTrack then
+                pcall(self.PreviewTrack.Stop, self.PreviewTrack, 0.08)
+                pcall(self.PreviewTrack.Destroy, self.PreviewTrack)
+            end
+
+            if self.PreviewAnimation and self.PreviewAnimation.Parent then pcall(self.PreviewAnimation.Destroy, self.PreviewAnimation) end
+
+            self.PreviewTrack = nil
+            self.PreviewAnimation = nil
+            self.PreviewAnimator = nil
+
+            if self.PreviewCard and self.PreviewCard.Image and self.PreviewCard.Image.Parent then self.PreviewCard.Image.Visible = true end
+            self.PreviewCard = nil
+
+            if DestroyViewport then
+                if self.PreviewViewport and self.PreviewViewport.Parent then self.PreviewViewport:Destroy() end
+                self.PreviewViewport = nil
+                self.PreviewWorld = nil
+                self.PreviewCamera = nil
+                self.PreviewLabel = nil
+                self.PreviewModel = nil
+            elseif self.PreviewViewport and self.PreviewViewport.Parent then
+                self.PreviewViewport.Visible = false
+                self.PreviewViewport.Parent = Overlay
+            end
+        end
+
+        function Catalog:EnsurePreviewViewport(Card)
+            if not self.PreviewViewport or not self.PreviewViewport.Parent then
+                local Viewport = New("ViewportFrame", {
+                    Ambient = Color3.fromRGB(190, 190, 190),
+                    BackgroundColor3 = "BackgroundColor",
+                    BorderSizePixel = 0,
+                    LightColor = Color3.fromRGB(255, 255, 255),
+                    LightDirection = Vector3.new(-1, -1, -1),
+                    Position = UDim2.fromOffset(7, 7),
+                    Size = UDim2.new(1, -14, 1, -48),
+                    Visible = false,
+                    ZIndex = 63,
+                    Parent = Overlay,
+                })
+                New("UICorner", {CornerRadius = UDim.new(0, math.max(Library.CornerRadius - 1, 0)), Parent = Viewport})
+
+                local World = Instance.new("WorldModel")
+                World.Parent = Viewport
+
+                local Camera = Instance.new("Camera")
+                Camera.FieldOfView = 32
+                Camera.Parent = Viewport
+                Viewport.CurrentCamera = Camera
+
+                local PreviewLabel = New("TextLabel", {
+                    BackgroundColor3 = "MainColor",
+                    BackgroundTransparency = 0.15,
+                    AnchorPoint = Vector2.new(0.5, 1),
+                    Position = UDim2.new(0.5, 0, 1, -5),
+                    Size = UDim2.new(1, -10, 0, 20),
+                    Text = "Loading preview...",
+                    TextSize = 10,
+                    TextTruncate = Enum.TextTruncate.AtEnd,
+                    ZIndex = 66,
+                    Parent = Viewport,
+                })
+                New("UICorner", {CornerRadius = UDim.new(0, math.max(Library.CornerRadius - 2, 0)), Parent = PreviewLabel})
+
+                self.PreviewViewport = Viewport
+                self.PreviewWorld = World
+                self.PreviewCamera = Camera
+                self.PreviewLabel = PreviewLabel
+            end
+
+            local Viewport = self.PreviewViewport
+            Viewport.Parent = Card.Frame
+            Viewport.Position = UDim2.fromOffset(7, 7)
+            Viewport.Size = UDim2.new(1, -14, 1, -48)
+            Viewport.ZIndex = 63
+            Viewport.Visible = true
+
+            self.PreviewCard = Card
+            if Card.Image and Card.Image.Parent then Card.Image.Visible = false end
+
+            if not self.PreviewModel or not self.PreviewModel.Parent then
+                local Clone, Animator, RigError = self:CreatePreviewRig(self.PreviewWorld)
+                if not Clone or not Animator then return nil, RigError end
+                self.PreviewModel = Clone
+                self.PreviewAnimator = Animator
+            else
+                self.PreviewAnimator = self:ResetRigAnimator(self.PreviewModel)
+                if not self.PreviewAnimator then return nil, "Avatar animator could not be reset" end
+            end
+
+            self:FramePreviewCamera(self.PreviewModel, self.PreviewCamera, false)
+            return self.PreviewAnimator
+        end
+
+        function Catalog:StartPreview(Result)
+            local AssetId = self:NormalizeAssetId(Result and (Result.Id or Result.id))
+            local Card = AssetId and self.Cards[AssetId]
+
+            self:StopPreview()
+            if not AssetId or not Card or not Card.Frame or not Card.Frame.Parent then return end
+
+            local Generation = self.PreviewGeneration
+            local Animator, RigError = self:EnsurePreviewViewport(Card)
+            if not Animator then
+                if self.PreviewLabel then self.PreviewLabel.Text = "Avatar preview unavailable" end
+                warn("Emote avatar preview failed:", RigError)
+                return
+            end
+
+            local Animation = Instance.new("Animation")
+            Animation.AnimationId = "rbxassetid://" .. AssetId
+            Animation.Parent = self.PreviewViewport
+            self.PreviewAnimation = Animation
+
+            local Track
+            local Success, ErrorMessage = pcall(function() Track = Animator:LoadAnimation(Animation) end)
+
+            if Generation ~= self.PreviewGeneration then
+                if Track then pcall(Track.Destroy, Track) end
+                pcall(Animation.Destroy, Animation)
+                return
+            end
+
+            if not Success or not Track then
+                self.PreviewLabel.Text = "Preview unavailable"
+                warn("Emote preview failed (" .. AssetId .. "):", ErrorMessage)
+                return
+            end
+
+            self.PreviewTrack = Track
+            Track.Looped = true
+            Track.Priority = Enum.AnimationPriority.Action4
+            Track:Play(0.08, 1, 1)
+            self.PreviewLabel.Text = "Emote"
+        end
+
+        function Catalog:QueuePreview(Result)
+            self:StopPreview()
+            local Generation = self.PreviewGeneration
+
+            task.delay(self.PreviewDelay, function()
+                if Generation ~= self.PreviewGeneration or not Overlay.Visible or self.SelectedResult ~= Result then return end
+                self:StartPreview(Result)
+            end)
+        end
+
+        function Catalog:StopFullPreview(Destroy)
+            local Result = self.FullPreviewResult
+
+            self.FullPreviewGeneration += 1
+            self.FullPreviewOpen = false
+            self.FullPreviewDragging = false
+            self.FullPreviewDragInput = nil
+            self.FullPreviewLastPosition = nil
+
+            if self.FullPreviewTrack then
+                pcall(self.FullPreviewTrack.Stop, self.FullPreviewTrack, 0.08)
+                pcall(self.FullPreviewTrack.Destroy, self.FullPreviewTrack)
+            end
+
+            if self.FullPreviewAnimation and self.FullPreviewAnimation.Parent then pcall(self.FullPreviewAnimation.Destroy, self.FullPreviewAnimation) end
+
+            self.FullPreviewTrack = nil
+            self.FullPreviewAnimation = nil
+            self.FullPreviewAnimator = nil
+            self.FullPreviewResult = nil
+
+            if Destroy then
+                if self.FullPreviewOverlay and self.FullPreviewOverlay.Parent then self.FullPreviewOverlay:Destroy() end
+                self.FullPreviewOverlay = nil
+                self.FullPreviewViewport = nil
+                self.FullPreviewWorld = nil
+                self.FullPreviewCamera = nil
+                self.FullPreviewTitle = nil
+                self.FullPreviewStatus = nil
+                self.FullPreviewModel = nil
+                self.FullPreviewCharacter = nil
+            elseif self.FullPreviewOverlay and self.FullPreviewOverlay.Parent then
+                self.FullPreviewOverlay.Visible = false
+            end
+
+            if not Destroy and Result and Overlay.Visible and self.SelectedResult == Result then
+                task.defer(function()
+                    if Overlay.Visible and not self.FullPreviewOpen and self.SelectedResult == Result then self:QueuePreview(Result) end
+                end)
+            end
+        end
+
+        function Catalog:UpdateFullPreviewCamera()
+            if not self.FullPreviewOpen or not self.FullPreviewCamera then return end
+            local Pitch = math.clamp(self.FullPreviewPitch, math.rad(-75), math.rad(75))
+            local CosPitch = math.cos(Pitch)
+            local Offset = Vector3.new(math.sin(self.FullPreviewYaw) * CosPitch, math.sin(Pitch), -math.cos(self.FullPreviewYaw) * CosPitch) * self.FullPreviewDistance
+            self.FullPreviewCamera.CFrame = CFrame.lookAt(self.FullPreviewCenter + Offset, self.FullPreviewCenter)
+        end
+
+        function Catalog:BuildFullPreviewRig()
+            if not self.FullPreviewWorld then return false, "Preview world is unavailable" end
+
+            if self.FullPreviewModel and self.FullPreviewModel.Parent then pcall(self.FullPreviewModel.Destroy, self.FullPreviewModel) end
+
+            local Clone, Animator, ErrorMessage = self:CreatePreviewRig(self.FullPreviewWorld)
+            if not Clone or not Animator then return false, ErrorMessage or "Avatar preview could not be created" end
+
+            self.FullPreviewModel = Clone
+            self.FullPreviewAnimator = Animator
+            self.FullPreviewCharacter = LocalPlayer.Character
+            self:FramePreviewCamera(Clone, self.FullPreviewCamera, true)
+            return true
+        end
+
+        function Catalog:EnsureFullPreview()
+            if not self.FullPreviewOverlay or not self.FullPreviewOverlay.Parent then
+                local FullOverlay = New("Frame", {
+                    Active = true,
+                    BackgroundColor3 = "BackgroundColor",
+                    BorderSizePixel = 0,
+                    Position = UDim2.fromScale(0, 0),
+                    Size = UDim2.fromScale(1, 1),
+                    Visible = false,
+                    ZIndex = 80,
+                    Parent = Overlay,
+                })
+                New("UICorner", {CornerRadius = UDim.new(0, Library.CornerRadius), Parent = FullOverlay})
+
+                local Viewport = New("ViewportFrame", {
+                    Active = true,
+                    Ambient = Color3.fromRGB(190, 190, 190),
+                    BackgroundColor3 = "BackgroundColor",
+                    BorderSizePixel = 0,
+                    LightColor = Color3.fromRGB(255, 255, 255),
+                    LightDirection = Vector3.new(-1, -1, -1),
+                    Position = UDim2.fromScale(0, 0),
+                    Size = UDim2.fromScale(1, 1),
+                    ZIndex = 81,
+                    Parent = FullOverlay,
+                })
+                New("UICorner", {CornerRadius = UDim.new(0, Library.CornerRadius), Parent = Viewport})
+
+                local World = Instance.new("WorldModel")
+                World.Parent = Viewport
+
+                local Camera = Instance.new("Camera")
+                Camera.FieldOfView = 32
+                Camera.Parent = Viewport
+                Viewport.CurrentCamera = Camera
+
+                local BackButton = New("TextButton", {
+                    BackgroundColor3 = "MainColor",
+                    BackgroundTransparency = 0.08,
+                    Position = UDim2.fromOffset(8, 8),
+                    Size = UDim2.fromOffset(76, 32),
+                    Text = "‹ Back",
+                    TextSize = 12,
+                    ZIndex = 85,
+                    Parent = FullOverlay,
+                })
+                Library:AddOutline(BackButton)
+                New("UICorner", {CornerRadius = UDim.new(0, Library.CornerRadius), Parent = BackButton})
+
+                local Title = New("TextLabel", {
+                    BackgroundColor3 = "MainColor",
+                    BackgroundTransparency = 0.12,
+                    AnchorPoint = Vector2.new(0.5, 0),
+                    Position = UDim2.new(0.5, 0, 0, 8),
+                    Size = UDim2.new(1, -188, 0, 32),
+                    Text = "Emote Preview",
+                    TextSize = 13,
+                    TextTruncate = Enum.TextTruncate.AtEnd,
+                    ZIndex = 84,
+                    Parent = FullOverlay,
+                })
+                New("UICorner", {CornerRadius = UDim.new(0, Library.CornerRadius), Parent = Title})
+
+                local SelectButton = New("TextButton", {
+                    BackgroundColor3 = "AccentColor",
+                    BackgroundTransparency = 0.05,
+                    AnchorPoint = Vector2.new(1, 0),
+                    Position = UDim2.new(1, -8, 0, 8),
+                    Size = UDim2.fromOffset(88, 32),
+                    Text = "Use",
+                    TextSize = 12,
+                    ZIndex = 85,
+                    Parent = FullOverlay,
+                })
+                Library:AddOutline(SelectButton)
+                New("UICorner", {CornerRadius = UDim.new(0, Library.CornerRadius), Parent = SelectButton})
+
+                local Status = New("TextLabel", {
+                    BackgroundColor3 = "MainColor",
+                    BackgroundTransparency = 0.12,
+                    AnchorPoint = Vector2.new(0.5, 1),
+                    Position = UDim2.new(0.5, 0, 1, -8),
+                    Size = UDim2.new(1, -16, 0, 28),
+                    Text = Library.IsMobile and "Drag to rotate" or "Drag to rotate • mouse wheel to zoom",
+                    TextSize = 11,
+                    TextTruncate = Enum.TextTruncate.AtEnd,
+                    ZIndex = 84,
+                    Parent = FullOverlay,
+                })
+                New("UICorner", {CornerRadius = UDim.new(0, Library.CornerRadius), Parent = Status})
+
+                self.FullPreviewOverlay = FullOverlay
+                self.FullPreviewViewport = Viewport
+                self.FullPreviewWorld = World
+                self.FullPreviewCamera = Camera
+                self.FullPreviewTitle = Title
+                self.FullPreviewStatus = Status
+
+                Library:GiveSignal(BackButton.MouseButton1Click:Connect(function() self:StopFullPreview() end))
+
+                Library:GiveSignal(SelectButton.MouseButton1Click:Connect(function()
+                    if self.FullPreviewResult then
+                        self.SelectedResult = self.FullPreviewResult
+                        self:UseSelected()
+                    end
+                end))
+
+                Library:GiveSignal(Viewport.InputBegan:Connect(function(Input)
+                    if not self.FullPreviewOpen then return end
+
+                    if Input.UserInputType == Enum.UserInputType.MouseButton1 or Input.UserInputType == Enum.UserInputType.Touch then
+                        self.FullPreviewDragging = true
+                        self.FullPreviewDragInput = Input
+                        self.FullPreviewLastPosition = Vector2.new(Input.Position.X, Input.Position.Y)
+                    end
+                end))
+
+                Library:GiveSignal(UserInputService.InputChanged:Connect(function(Input)
+                    if not self.FullPreviewOpen then return end
+
+                    if Input.UserInputType == Enum.UserInputType.MouseWheel then
+                        self.FullPreviewDistance = math.clamp(self.FullPreviewDistance - Input.Position.Z * 0.8, self.FullPreviewMinDistance, self.FullPreviewMaxDistance)
+                        self:UpdateFullPreviewCamera()
+                        return
+                    end
+
+                    if not self.FullPreviewDragging or not self.FullPreviewLastPosition then return end
+
+                    if self.FullPreviewDragInput and self.FullPreviewDragInput.UserInputType == Enum.UserInputType.Touch then
+                        if Input ~= self.FullPreviewDragInput then return end
+                    elseif Input.UserInputType ~= Enum.UserInputType.MouseMovement then
+                        return
+                    end
+
+                    local Position = Vector2.new(Input.Position.X, Input.Position.Y)
+                    local Delta = Position - self.FullPreviewLastPosition
+                    self.FullPreviewLastPosition = Position
+                    self.FullPreviewYaw -= Delta.X * 0.012
+                    self.FullPreviewPitch = math.clamp(self.FullPreviewPitch - Delta.Y * 0.008, math.rad(-75), math.rad(75))
+                    self:UpdateFullPreviewCamera()
+                end))
+
+                Library:GiveSignal(UserInputService.InputEnded:Connect(function(Input)
+                    if not self.FullPreviewDragging then return end
+
+                    if Input == self.FullPreviewDragInput or Input.UserInputType == Enum.UserInputType.MouseButton1 then
+                        self.FullPreviewDragging = false
+                        self.FullPreviewDragInput = nil
+                        self.FullPreviewLastPosition = nil
+                    end
+                end))
+            end
+
+            if not self.FullPreviewModel or not self.FullPreviewModel.Parent or self.FullPreviewCharacter ~= LocalPlayer.Character then
+                return self:BuildFullPreviewRig()
+            end
+
+            self.FullPreviewAnimator = self:ResetRigAnimator(self.FullPreviewModel)
+            if not self.FullPreviewAnimator then return false, "Avatar animator could not be reset" end
+
+            self:FramePreviewCamera(self.FullPreviewModel, self.FullPreviewCamera, true)
+            return true
+        end
+
+        function Catalog:OpenFullPreview(Result)
+            if self.FullPreviewOpen or not Result or not Overlay.Visible then return end
+
+            local AssetId = self:NormalizeAssetId(Result.Id or Result.id)
+            if not AssetId then return end
+
+            self:StopPreview()
+
+            local Ready, ErrorMessage = self:EnsureFullPreview()
+            if not Ready then
+                self:Notify("Emotes", tostring(ErrorMessage or "Avatar preview could not be created"))
+                return
+            end
+
+            self.FullPreviewGeneration += 1
+            local Generation = self.FullPreviewGeneration
+            self.FullPreviewOpen = true
+            self.FullPreviewResult = Result
+            self.FullPreviewTitle.Text = tostring(Result.Name or Result.name or "Emote Preview")
+            self.FullPreviewStatus.Text = Library.IsMobile and "Drag to rotate" or "Drag to rotate • mouse wheel to zoom"
+            self.FullPreviewOverlay.Visible = true
+
+            self:FramePreviewCamera(self.FullPreviewModel, self.FullPreviewCamera, true)
+
+            local Animation = Instance.new("Animation")
+            Animation.AnimationId = "rbxassetid://" .. AssetId
+            Animation.Parent = self.FullPreviewViewport
+            self.FullPreviewAnimation = Animation
+
+            local Track
+            local Success, LoadError = pcall(function() Track = self.FullPreviewAnimator:LoadAnimation(Animation) end)
+
+            if Generation ~= self.FullPreviewGeneration or not self.FullPreviewOpen then
+                if Track then pcall(Track.Destroy, Track) end
+                pcall(Animation.Destroy, Animation)
+                return
+            end
+
+            if not Success or not Track then
+                self.FullPreviewStatus.Text = "Preview unavailable"
+                warn("Full emote preview failed (" .. AssetId .. "):", LoadError)
+                return
+            end
+
+            self.FullPreviewTrack = Track
+            Track.Looped = true
+            Track.Priority = Enum.AnimationPriority.Action4
+            Track:Play(0.08, 1, 1)
+        end
+
+        function Catalog:UseSelected()
+            if self.Disabled then return false end
+
+            local Result = self.SelectedResult
+            if not Result then
+                self:Notify("Emotes", "Select an emote first")
+                return false
+            end
+
+            local AssetId = self:NormalizeAssetId(Result.Id or Result.id)
+            if not AssetId then return false end
+
+            self.Value = AssetId
+            self.AppliedResult = Result
+            self:Display()
+            self:RefreshCards()
+            Library:SafeCallback(self.Callback, Result)
+            Library:SafeCallback(self.Changed, Result)
+            return true
+        end
+
+        function Catalog:SetValue(Value)
+            local Result
+
+            if type(Value) == "table" then
+                Result = Value
+            else
+                local AssetId = self:NormalizeAssetId(Value)
+                if AssetId then Result = {Id = AssetId, Name = "Emote " .. AssetId} end
+            end
+
+            if not Result then return false end
+
+            self:SelectResult(Result)
+            return self:UseSelected()
+        end
+
+        function Catalog:SelectResult(Result)
+            self.SelectedResult = Result
+            self:Display()
+            self:RefreshCards()
+            self:QueuePreview(Result)
+        end
+
+        function Catalog:ClearCards()
+            self:StopPreview()
+
+            for _, Card in next, self.Cards do
+                if Card.Frame and Card.Frame.Parent then Card.Frame:Destroy() end
+            end
+
+            table.clear(self.Cards)
+        end
+
+        function Catalog:RefreshCards()
+            for AssetId, Card in next, self.Cards do
+                local Selected = self.SelectedResult and tostring(self.SelectedResult.Id) == tostring(AssetId)
+                local Applied = self.AppliedResult and tostring(self.AppliedResult.Id) == tostring(AssetId)
+
+                Card.Stroke.Color = Selected and Library.Scheme.AccentColor or Library.Scheme.OutlineColor
+                Card.Stroke.Thickness = Selected and 2 or 1
+                Card.Badge.Visible = Applied == true
+            end
+        end
+
+        function Catalog:CreateCard(Result, LayoutOrder)
+            local AssetId = self:NormalizeAssetId(Result.Id or Result.id)
+            if not AssetId then return end
+
+            local Card = New("TextButton", {
+                BackgroundColor3 = "MainColor",
+                LayoutOrder = LayoutOrder,
+                Text = "",
+                ZIndex = 62,
+                Parent = Results,
+            })
+            New("UICorner", {CornerRadius = UDim.new(0, Library.CornerRadius), Parent = Card})
+
+            local Stroke = New("UIStroke", {
+                Color = "OutlineColor",
+                Thickness = 1,
+                Parent = Card,
+            })
+
+            local Image = New("ImageLabel", {
+                BackgroundColor3 = "BackgroundColor",
+                Image = string.format("rbxthumb://type=Asset&id=%s&w=150&h=150", AssetId),
+                Position = UDim2.fromOffset(7, 7),
+                ScaleType = Enum.ScaleType.Fit,
+                Size = UDim2.new(1, -14, 1, -48),
+                ZIndex = 63,
+                Parent = Card,
+            })
+            New("UICorner", {CornerRadius = UDim.new(0, math.max(Library.CornerRadius - 1, 0)), Parent = Image})
+
+            New("TextLabel", {
+                BackgroundTransparency = 1,
+                AnchorPoint = Vector2.new(0, 1),
+                Position = UDim2.new(0, 7, 1, -5),
+                Size = UDim2.new(1, -14, 0, 34),
+                Text = tostring(Result.Name or Result.name or ("Emote " .. AssetId)),
+                TextSize = Library.IsMobile and 11 or 12,
+                TextTruncate = Enum.TextTruncate.AtEnd,
+                TextWrapped = true,
+                TextXAlignment = Enum.TextXAlignment.Left,
+                TextYAlignment = Enum.TextYAlignment.Bottom,
+                ZIndex = 63,
+                Parent = Card,
+            })
+
+            local Badge = New("TextLabel", {
+                BackgroundColor3 = "AccentColor",
+                Position = UDim2.fromOffset(7, 7),
+                Size = UDim2.fromOffset(58, 20),
+                Text = "ACTIVE",
+                TextSize = 9,
+                Visible = false,
+                ZIndex = 64,
+                Parent = Card,
+            })
+            New("UICorner", {CornerRadius = UDim.new(0, Library.CornerRadius), Parent = Badge})
+
+            self.Cards[AssetId] = {
+                Frame = Card,
+                Stroke = Stroke,
+                Badge = Badge,
+                Image = Image,
+            }
+
+            Library:GiveSignal(Card.MouseButton1Click:Connect(function()
+                if self.Disabled or self.FullPreviewOpen then return end
+
+                local Now = os.clock()
+                local SelectedId = self.SelectedResult and self:NormalizeAssetId(self.SelectedResult.Id or self.SelectedResult.id)
+                local AlreadySelected = SelectedId == AssetId
+                local DoubleTap = self.CardTapId == AssetId and Now - self.CardTapTime <= self.DoubleTapWindow
+
+                self.CardTapId = AssetId
+                self.CardTapTime = Now
+
+                if AlreadySelected and DoubleTap then
+                    self.CardTapId = nil
+                    self.CardTapTime = 0
+                    self:OpenFullPreview(Result)
+                    return
+                end
+
+                if not AlreadySelected then self:SelectResult(Result) end
+            end))
+        end
+
+        function Catalog:UpdatePageControls()
+            local Current = self.PageIndex or 1
+            local HasNext = self.PageHistory and self.PageHistory[Current + 1] ~= nil
+            local CanNext = not self.PageBusy and (HasNext or (self.CurrentPages and not self.CurrentPages.IsFinished))
+            local CanPrevious = not self.PageBusy and Current > 1
+
+            PreviousButton.Active = CanPrevious == true
+            PreviousButton.TextTransparency = CanPrevious and 0 or 0.5
+            NextButton.Active = CanNext == true
+            NextButton.TextTransparency = CanNext and 0 or 0.5
+            NextButton.Text = self.PageBusy and "Loading..." or "Next"
+        end
+
+        function Catalog:RenderResults()
+            self:ClearCards()
+            self:UpdateGrid()
+
+            for Index, Result in next, self.Results do self:CreateCard(Result, Index) end
+
+            self:RefreshCards()
+
+            local SelectedId = self.SelectedResult and self:NormalizeAssetId(self.SelectedResult.Id or self.SelectedResult.id)
+            if SelectedId and self.Cards[SelectedId] then self:QueuePreview(self.SelectedResult) end
+
+            if #self.Results == 0 then
+                StatusLabel.Text = self.CurrentQuery ~= "" and ("No emotes found for \"" .. self.CurrentQuery .. "\"") or "No emotes found"
+            else
+                StatusLabel.Text = string.format("%d emote%s • Page %d", #self.Results, #self.Results == 1 and "" or "s", self.PageIndex or 1)
+            end
+
+            self:UpdatePageControls()
+        end
+
+        function Catalog:AppendPage(Page)
+            if type(Page) ~= "table" then return end
+
+            for _, Item in next, Page do
+                local AssetId = self:NormalizeAssetId(Item.Id or Item.id)
+                local AssetType = tonumber(Item.AssetType or Item.assetType or Item.AssetTypeId or Item.assetTypeId)
+
+                if AssetId and not self.ResultById[AssetId] and (not AssetType or AssetType == Enum.AssetType.EmoteAnimation.Value) then
+                    local Result = {
+                        Id = AssetId,
+                        Name = tostring(Item.Name or Item.name or ("Emote " .. AssetId)),
+                        CreatorName = Item.CreatorName or Item.creatorName,
+                    }
+
+                    self.ResultById[AssetId] = Result
+                    table.insert(self.Results, Result)
+                end
+            end
+        end
+
+        function Catalog:PerformSearch(Query, Generation)
+            if Generation ~= self.SearchGeneration then return end
+
+            local CacheKey = string.lower(Query)
+            local Cached = self.QueryCache[CacheKey]
+
+            if Cached then
+                self.PageHistory = Cached.History or {table.clone(Cached.Results)}
+                self.PageIndex = Cached.Index or 1
+                self.Results = table.clone(self.PageHistory[self.PageIndex] or {})
+                self.ResultById = {}
+
+                for _, Result in next, self.Results do self.ResultById[tostring(Result.Id)] = Result end
+
+                self.CurrentPages = Cached.Pages
+                self.PageBusy = false
+                self:RenderResults()
+                return
+            end
+
+            StatusLabel.Text = "Searching Roblox..."
+
+            local Params = CatalogSearchParams.new()
+            Params.SearchKeyword = Query ~= "" and Query or "emote"
+            Params.AssetTypes = {Enum.AvatarAssetType.EmoteAnimation}
+            Params.SortType = Enum.CatalogSortType.Relevance
+            Params.Limit = self.PageSize
+
+            local Success, Pages = pcall(AvatarEditorService.SearchCatalogAsync, AvatarEditorService, Params)
+
+            if not Success or not Pages then
+                local ServiceError = tostring(Pages)
+
+                local function FetchCatalogPage(Cursor)
+                    local Url = "https://catalog.roblox.com/v1/search/items/details?Category=12&Subcategory=39&Limit=" .. tostring(self.PageSize)
+                    if Query ~= "" then Url ..= "&Keyword=" .. HttpService:UrlEncode(Query) end
+                    if Cursor and Cursor ~= "" then Url ..= "&Cursor=" .. HttpService:UrlEncode(Cursor) end
+
+                    local GotBody, Body = pcall(game.HttpGet, game, Url)
+
+                    if not GotBody or type(Body) ~= "string" then
+                        local Request = request or http_request or (syn and syn.request)
+                        if type(Request) ~= "function" then error("Roblox emote catalog HTTP request failed: " .. tostring(Body)) end
+
+                        local RequestSuccess, Response = pcall(Request, {
+                            Url = Url,
+                            Method = "GET",
+                        })
+
+                        if not RequestSuccess or type(Response) ~= "table" or tonumber(Response.StatusCode or Response.Status) ~= 200 then
+                            error("Roblox emote catalog HTTP request failed")
+                        end
+
+                        Body = Response.Body
+                    end
+
+                    local Data = HttpService:JSONDecode(Body)
+                    if type(Data) ~= "table" or type(Data.data) ~= "table" then error("Roblox emote catalog returned an invalid page") end
+                    return Data
+                end
+
+                local HttpSuccess, FirstPage = pcall(FetchCatalogPage, nil)
+
+                if HttpSuccess then
+                    local HttpPages = {
+                        Page = FirstPage.data,
+                        NextCursor = FirstPage.nextPageCursor,
+                        IsFinished = not FirstPage.nextPageCursor,
+                    }
+
+                    function HttpPages:GetCurrentPage()
+                        return self.Page
+                    end
+
+                    function HttpPages:AdvanceToNextPageAsync()
+                        if self.IsFinished then return end
+                        local NextPage = FetchCatalogPage(self.NextCursor)
+                        self.Page = NextPage.data
+                        self.NextCursor = NextPage.nextPageCursor
+                        self.IsFinished = not self.NextCursor
+                    end
+
+                    Pages = HttpPages
+                    Success = true
+                else
+                    warn("Emote catalog search failed:", ServiceError, "HTTP fallback:", FirstPage)
+                    Pages = "Roblox emote catalog request failed"
+                end
+            end
+
+            if Generation ~= self.SearchGeneration then return end
+
+            if not Success or not Pages then
+                StatusLabel.Text = tostring(Pages):sub(1, 150)
+                self.PageBusy = false
+                self.CurrentPages = nil
+                self.PageHistory = nil
+                self.PageIndex = 1
+                self.Results = {}
+                self.ResultById = {}
+                self:ClearCards()
+                self:UpdatePageControls()
+                return
+            end
+
+            self.Results = {}
+            self.ResultById = {}
+            self.CurrentPages = Pages
+            self:AppendPage(Pages:GetCurrentPage())
+            self.PageHistory = {table.clone(self.Results)}
+            self.PageIndex = 1
+            self.PageBusy = false
+
+            self.QueryCache[CacheKey] = {
+                Results = table.clone(self.Results),
+                Pages = Pages,
+                History = self.PageHistory,
+                Index = 1,
+            }
+
+            self:RenderResults()
+        end
+
+        function Catalog:Search(Query)
+            Query = tostring(Query or "")
+            self.CurrentQuery = Query
+            self.SearchGeneration += 1
+            self.PageBusy = true
+            self:UpdatePageControls()
+
+            local Generation = self.SearchGeneration
+
+            task.delay(self.SearchDebounce, function()
+                if Generation == self.SearchGeneration and Overlay.Visible then
+                    task.spawn(function() self:PerformSearch(Query, Generation) end)
+                end
+            end)
+        end
+
+        function Catalog:PreviousPage()
+            if self.PageBusy or not self.PageIndex or self.PageIndex <= 1 then return end
+
+            self.PageIndex -= 1
+            self.Results = table.clone(self.PageHistory[self.PageIndex])
+            self.ResultById = {}
+
+            for _, Result in next, self.Results do self.ResultById[tostring(Result.Id)] = Result end
+
+            local Cached = self.QueryCache[string.lower(self.CurrentQuery)]
+            if Cached then Cached.Index = self.PageIndex end
+
+            Results.CanvasPosition = Vector2.zero
+            self:RenderResults()
+        end
+
+        function Catalog:NextPage()
+            if self.PageBusy then return end
+
+            local NewIndex = (self.PageIndex or 1) + 1
+
+            if self.PageHistory and self.PageHistory[NewIndex] then
+                self.PageIndex = NewIndex
+                self.Results = table.clone(self.PageHistory[NewIndex])
+                self.ResultById = {}
+
+                for _, Result in next, self.Results do self.ResultById[tostring(Result.Id)] = Result end
+
+                local Cached = self.QueryCache[string.lower(self.CurrentQuery)]
+                if Cached then Cached.Index = NewIndex end
+
+                Results.CanvasPosition = Vector2.zero
+                self:RenderResults()
+                return
+            end
+
+            local Pages = self.CurrentPages
+            if not Pages or Pages.IsFinished then
+                self:UpdatePageControls()
+                return
+            end
+
+            self.PageBusy = true
+            self:UpdatePageControls()
+            local Generation = self.SearchGeneration
+
+            task.spawn(function()
+                local Success, Page = pcall(function()
+                    Pages:AdvanceToNextPageAsync()
+                    return Pages:GetCurrentPage()
+                end)
+
+                if Generation ~= self.SearchGeneration or self.CurrentPages ~= Pages then return end
+
+                if Success then
+                    self.Results = {}
+                    self.ResultById = {}
+                    self:AppendPage(Page)
+                    self.PageIndex = NewIndex
+                    self.PageHistory[NewIndex] = table.clone(self.Results)
+                    self.QueryCache[string.lower(self.CurrentQuery)] = {
+                        Results = table.clone(self.Results),
+                        Pages = Pages,
+                        History = self.PageHistory,
+                        Index = NewIndex,
+                    }
+                    Results.CanvasPosition = Vector2.zero
+                    self:RenderResults()
+                else
+                    StatusLabel.Text = "Couldn't load page: " .. tostring(Page):sub(1, 100)
+                end
+
+                self.PageBusy = false
+                self:UpdatePageControls()
+            end)
+        end
+
+        function Catalog:Open()
+            if self.Disabled then return end
+
+            self:UpdateOverlayBounds()
+            self:UpdateGrid()
+            Overlay.Visible = true
+            Arrow.Text = "‹"
+
+            if #self.Results == 0 then
+                self:Search(SearchBox.Text)
+            else
+                self:RenderResults()
+            end
+        end
+
+        function Catalog:Close()
+            self:StopFullPreview()
+            self:StopPreview()
+            Overlay.Visible = false
+            SearchBox:ReleaseFocus()
+            Arrow.Text = "›"
+        end
+
+        function Catalog:SetDisabled(Value)
+            self.Disabled = Value == true
+            DisplayButton.AutoButtonColor = false
+            DisplayText.TextTransparency = self.Disabled and 0.5 or 0
+            Label.TextTransparency = self.Disabled and 0.5 or 0
+            if self.Disabled then self:Close() end
+        end
+
+        Library:GiveSignal(DisplayButton.MouseButton1Click:Connect(function() Catalog:Open() end))
+        Library:GiveSignal(CloseButton.MouseButton1Click:Connect(function() Catalog:Close() end))
+        Library:GiveSignal(PreviousButton.MouseButton1Click:Connect(function() Catalog:PreviousPage() end))
+        Library:GiveSignal(NextButton.MouseButton1Click:Connect(function() Catalog:NextPage() end))
+        Library:GiveSignal(UseButton.MouseButton1Click:Connect(function() Catalog:UseSelected() end))
+        Library:GiveSignal(SearchBox:GetPropertyChangedSignal("Text"):Connect(function() Catalog:Search(SearchBox.Text) end))
+        Library:GiveSignal(Results:GetPropertyChangedSignal("AbsoluteSize"):Connect(function() Catalog:UpdateGrid() end))
+
+        if ContentFrame then
+            Library:GiveSignal(ContentFrame:GetPropertyChangedSignal("Position"):Connect(function()
+                if Overlay.Visible then Catalog:UpdateOverlayBounds() end
+            end))
+            Library:GiveSignal(ContentFrame:GetPropertyChangedSignal("Size"):Connect(function()
+                if Overlay.Visible then Catalog:UpdateOverlayBounds() end
+            end))
+        end
+
+        Library:OnUnload(function()
+            Catalog:StopPreview(true)
+            Catalog:StopFullPreview(true)
+        end)
+
+        Library:GiveSignal(LocalPlayer.CharacterAdded:Connect(function(Character)
+            Catalog:StopPreview(true)
+            Catalog:StopFullPreview(true)
+
+            if Overlay.Visible and Catalog.SelectedResult then
+                local SelectedResult = Catalog.SelectedResult
+                task.delay(0.75, function()
+                    if Overlay.Visible and Catalog.SelectedResult == SelectedResult and LocalPlayer.Character == Character then
+                        Catalog:QueuePreview(SelectedResult)
+                    end
+                end)
+            end
+        end))
+
+        if Groupbox.Tab and Groupbox.SubPage and type(Groupbox.Tab.SubPages) == "table" then
+            for _, SubPage in next, Groupbox.Tab.SubPages do
+                if SubPage ~= Groupbox.SubPage and SubPage.Button then
+                    Library:GiveSignal(SubPage.Button.MouseButton1Click:Connect(function() Catalog:Close() end))
+                end
+            end
+        end
+
+        Catalog.Holder = Holder
+        Catalog.Overlay = Overlay
+        Catalog.SearchBox = SearchBox
+        Catalog.ResultsFrame = Results
+        Catalog.Default = Info.Default
+
+        table.insert(Groupbox.Elements, Catalog)
+        Options[Idx] = Catalog
+        Groupbox:Resize()
+        Library:BindDisabledState(Catalog, Info.Disabled)
+        Catalog:Display()
+
+        return Catalog
+    end
+
     BaseGroupbox.__index = Funcs
     BaseGroupbox.__namecall = function(_, Key, ...)
         return Funcs[Key](...)
