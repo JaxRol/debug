@@ -9,6 +9,7 @@ local RunService: RunService = cloneref(game:GetService("RunService"))
 local SoundService: SoundService = cloneref(game:GetService("SoundService"))
 local UserInputService: UserInputService = cloneref(game:GetService("UserInputService"))
 local TextService: TextService = cloneref(game:GetService("TextService"))
+local HttpService: HttpService = cloneref(game:GetService("HttpService"))
 local Teams: Teams = cloneref(game:GetService("Teams"))
 local TweenService: TweenService = cloneref(game:GetService("TweenService"))
 local getgenv = getgenv or function()
@@ -164,6 +165,12 @@ local Library = {
     Buttons = Buttons,
     Toggles = Toggles,
     Options = Options,
+    FeatureRegistry = {},
+    FeatureRegistryById = {},
+    FeatureRegistrySerial = 0,
+    Favorites = {},
+    FavoritesFile = "ZeroPoint/Favorites.json",
+    FeatureSearchUI = nil,
     NotifySide = "Right",
     ShowCustomCursor = true,
     ForceCheckbox = false,
@@ -589,12 +596,12 @@ local function CheckDepbox(Box, Search)
             continue
         elseif ElementInfo.SubButton then
             local Visible = false
-            if ElementInfo.Text:lower():match(Search) and ElementInfo.Visible then
+            if ElementInfo.Text:lower():find(Search, 1, true) and ElementInfo.Visible then
                 Visible = true
             else
                 ElementInfo.Base.Visible = false
             end
-            if ElementInfo.SubButton.Text:lower():match(Search) and ElementInfo.SubButton.Visible then
+            if ElementInfo.SubButton.Text:lower():find(Search, 1, true) and ElementInfo.SubButton.Visible then
                 Visible = true
             else
                 ElementInfo.SubButton.Base.Visible = false
@@ -605,7 +612,7 @@ local function CheckDepbox(Box, Search)
             end
             continue
         end
-        if ElementInfo.Text and ElementInfo.Text:lower():match(Search) and ElementInfo.Visible then
+        if ElementInfo.Text and ElementInfo.Text:lower():find(Search, 1, true) and ElementInfo.Visible then
             ElementInfo.Holder.Visible = true
             VisibleElements += 1
         else
@@ -656,13 +663,13 @@ local function ApplySearchToTab(Tab, Search)
             elseif ElementInfo.SubButton then
                 local Visible = false
 
-                if ElementInfo.Text:lower():match(Search) and ElementInfo.Visible then
+                if ElementInfo.Text:lower():find(Search, 1, true) and ElementInfo.Visible then
                     Visible = true
                 else
                     ElementInfo.Base.Visible = false
                 end
 
-                if ElementInfo.SubButton.Text:lower():match(Search) and ElementInfo.SubButton.Visible then
+                if ElementInfo.SubButton.Text:lower():find(Search, 1, true) and ElementInfo.SubButton.Visible then
                     Visible = true
                 else
                     ElementInfo.SubButton.Base.Visible = false
@@ -677,7 +684,7 @@ local function ApplySearchToTab(Tab, Search)
                 continue
             end
 
-            if ElementInfo.Text and ElementInfo.Text:lower():match(Search) and ElementInfo.Visible then
+            if ElementInfo.Text and ElementInfo.Text:lower():find(Search, 1, true) and ElementInfo.Visible then
                 ElementInfo.Holder.Visible = true
                 VisibleElements += 1
             else
@@ -719,13 +726,13 @@ local function ApplySearchToTab(Tab, Search)
                 elseif ElementInfo.SubButton then
                     local Visible = false
 
-                    if ElementInfo.Text:lower():match(Search) and ElementInfo.Visible then
+                    if ElementInfo.Text:lower():find(Search, 1, true) and ElementInfo.Visible then
                         Visible = true
                     else
                         ElementInfo.Base.Visible = false
                     end
 
-                    if ElementInfo.SubButton.Text:lower():match(Search) and ElementInfo.SubButton.Visible then
+                    if ElementInfo.SubButton.Text:lower():find(Search, 1, true) and ElementInfo.SubButton.Visible then
                         Visible = true
                     else
                         ElementInfo.SubButton.Base.Visible = false
@@ -740,7 +747,7 @@ local function ApplySearchToTab(Tab, Search)
                     continue
                 end
 
-                if ElementInfo.Text and ElementInfo.Text:lower():match(Search) and ElementInfo.Visible then
+                if ElementInfo.Text and ElementInfo.Text:lower():find(Search, 1, true) and ElementInfo.Visible then
                     ElementInfo.Holder.Visible = true
                     VisibleElements[SubTab] += 1
                 else
@@ -948,6 +955,251 @@ function Library:UpdateSearch(SearchText)
         Library.LastSearchTab = Library.ActiveTab
     end
 end
+
+local FeatureFavoriteEnvKey = "ZeroPointFeatureFavorites"
+
+local function CopyFavoriteMap(Source)
+    local Result = {}
+    if typeof(Source) ~= "table" then
+        return Result
+    end
+    for Id, Enabled in next, Source do
+        if typeof(Id) == "string" and Enabled == true then
+            Result[Id] = true
+        end
+    end
+    return Result
+end
+
+function Library:LoadFeatureFavorites()
+    local Environment = getgenv()
+    local Favorites = CopyFavoriteMap(Environment[FeatureFavoriteEnvKey])
+
+    if typeof(isfile) == "function" and typeof(readfile) == "function" then
+        local ExistsSuccess, Exists = pcall(isfile, Library.FavoritesFile)
+        if ExistsSuccess and Exists then
+            local ReadSuccess, Body = pcall(readfile, Library.FavoritesFile)
+            if ReadSuccess and typeof(Body) == "string" and Body ~= "" then
+                local DecodeSuccess, Decoded = pcall(HttpService.JSONDecode, HttpService, Body)
+                if DecodeSuccess and typeof(Decoded) == "table" then
+                    Favorites = {}
+                    if #Decoded > 0 then
+                        for _, Id in next, Decoded do
+                            if typeof(Id) == "string" and Id ~= "" then
+                                Favorites[Id] = true
+                            end
+                        end
+                    else
+                        for Id, Enabled in next, Decoded do
+                            if typeof(Id) == "string" and Enabled == true then
+                                Favorites[Id] = true
+                            end
+                        end
+                    end
+                end
+            end
+        end
+    end
+
+    Library.Favorites = Favorites
+    Environment[FeatureFavoriteEnvKey] = CopyFavoriteMap(Favorites)
+    return Favorites
+end
+
+function Library:SaveFeatureFavorites()
+    local Environment = getgenv()
+    Environment[FeatureFavoriteEnvKey] = CopyFavoriteMap(Library.Favorites)
+
+    if typeof(writefile) ~= "function" then
+        return false
+    end
+
+    if typeof(isfolder) == "function" and typeof(makefolder) == "function" then
+        local Folder = Library.FavoritesFile:match("^(.*)/[^/]+$")
+        if Folder and Folder ~= "" then
+            local CurrentPath = ""
+            for Segment in Folder:gmatch("[^/]+") do
+                CurrentPath = CurrentPath == "" and Segment or (CurrentPath .. "/" .. Segment)
+                local FolderSuccess, Exists = pcall(isfolder, CurrentPath)
+                if FolderSuccess and not Exists then
+                    pcall(makefolder, CurrentPath)
+                end
+            end
+        end
+    end
+
+    local Saved = {}
+    for Id, Enabled in next, Library.Favorites do
+        if Enabled == true then
+            table.insert(Saved, Id)
+        end
+    end
+    table.sort(Saved)
+
+    local EncodeSuccess, Body = pcall(HttpService.JSONEncode, HttpService, Saved)
+    if not EncodeSuccess then
+        return false
+    end
+
+    return pcall(writefile, Library.FavoritesFile, Body)
+end
+
+function Library:IsFeatureFavorite(Id)
+    return typeof(Id) == "string" and Library.Favorites[Id] == true
+end
+
+function Library:SetFeatureFavorite(Id, State)
+    if typeof(Id) ~= "string" or Id == "" then
+        return false
+    end
+
+    if State == true then
+        Library.Favorites[Id] = true
+    else
+        Library.Favorites[Id] = nil
+    end
+
+    Library:SaveFeatureFavorites()
+    if Library.FeatureSearchUI and typeof(Library.FeatureSearchUI.Refresh) == "function" then
+        Library.FeatureSearchUI:Refresh()
+    end
+    return Library.Favorites[Id] == true
+end
+
+function Library:ToggleFeatureFavorite(Id)
+    return Library:SetFeatureFavorite(Id, not Library:IsFeatureFavorite(Id))
+end
+
+function Library:RegisterFeature(Control, Groupbox, Idx)
+    if typeof(Control) ~= "table" or typeof(Groupbox) ~= "table" then
+        return nil
+    end
+
+    local NavigationGroupbox = Groupbox.RootGroupbox or Groupbox
+    local Tab = Groupbox.Tab or NavigationGroupbox.Tab
+    if typeof(Tab) ~= "table" or Tab.IsKeyTab then
+        return nil
+    end
+
+    local Text = tostring(Control.Text or Idx or Control.Type or "Feature")
+    if Trim(Text) == "" then
+        return nil
+    end
+
+    local SubPage = Groupbox.SubPage or Groupbox.Page or NavigationGroupbox.SubPage or NavigationGroupbox.Page
+    local TabName = tostring(Tab.Name or (Tab.DefaultSubPage and Tab.DefaultSubPage.Name) or "Tab")
+    local SubPageName = tostring((SubPage and SubPage.Name) or TabName)
+    local GroupboxName = tostring(NavigationGroupbox.Name or Groupbox.Name or "General")
+    local TypeName = tostring(Control.Type or "Control")
+
+    local BaseId
+    if Idx ~= nil and tostring(Idx) ~= "" then
+        BaseId = TypeName .. ":" .. tostring(Idx)
+    else
+        BaseId = table.concat({ TabName, SubPageName, GroupboxName, TypeName, Text }, "/")
+    end
+
+    local Id = BaseId
+    local Suffix = 2
+    while Library.FeatureRegistryById[Id] and Library.FeatureRegistryById[Id].Control ~= Control do
+        Id = BaseId .. "#" .. tostring(Suffix)
+        Suffix += 1
+    end
+
+    local Existing = Library.FeatureRegistryById[Id]
+    if Existing and Existing.Control == Control then
+        return Existing
+    end
+
+    Library.FeatureRegistrySerial += 1
+    local Tooltip = typeof(Control.Tooltip) == "string" and Control.Tooltip or ""
+    local SearchKey = table.concat({ Text, TypeName, TabName, SubPageName, GroupboxName, tostring(Idx or ""), Tooltip }, " "):lower()
+    local Feature = {
+        Id = Id,
+        Idx = Idx,
+        Text = Text,
+        Type = TypeName,
+        Tab = Tab,
+        TabName = TabName,
+        SubPage = SubPage,
+        SubPageName = SubPageName,
+        Groupbox = NavigationGroupbox,
+        ParentGroupbox = Groupbox,
+        GroupboxName = GroupboxName,
+        Control = Control,
+        Holder = Control.Holder,
+        SearchKey = SearchKey,
+        Order = Library.FeatureRegistrySerial,
+    }
+
+    Control.FeatureId = Id
+    Control.FeatureInfo = Feature
+    Library.FeatureRegistryById[Id] = Feature
+    table.insert(Library.FeatureRegistry, Feature)
+
+    if Library.FeatureSearchUI and Library.FeatureSearchUI.Visible and typeof(Library.FeatureSearchUI.Refresh) == "function" then
+        Library.FeatureSearchUI:Refresh()
+    end
+    return Feature
+end
+
+function Library:GetFeatureSearchResults(Query, FavoritesOnly)
+    Query = Trim(tostring(Query or "")):lower()
+    local Tokens = {}
+    for Token in Query:gmatch("%S+") do
+        table.insert(Tokens, Token)
+    end
+
+    local Results = {}
+    for _, Feature in next, Library.FeatureRegistry do
+        if FavoritesOnly and not Library:IsFeatureFavorite(Feature.Id) then
+            continue
+        end
+
+        local Matches = true
+        for _, Token in next, Tokens do
+            if not Feature.SearchKey:find(Token, 1, true) then
+                Matches = false
+                break
+            end
+        end
+        if not Matches then
+            continue
+        end
+
+        local TextLower = Feature.Text:lower()
+        local Score = 0
+        if Query ~= "" then
+            if TextLower == Query then
+                Score += 1000
+            elseif TextLower:sub(1, #Query) == Query then
+                Score += 700
+            elseif TextLower:find(Query, 1, true) then
+                Score += 450
+            elseif Feature.SearchKey:find(Query, 1, true) then
+                Score += 250
+            end
+        end
+        if Library:IsFeatureFavorite(Feature.Id) then
+            Score += 25
+        end
+        Feature._SearchScore = Score
+        table.insert(Results, Feature)
+    end
+
+    table.sort(Results, function(A, B)
+        if A._SearchScore ~= B._SearchScore then
+            return A._SearchScore > B._SearchScore
+        end
+        local AText, BText = A.Text:lower(), B.Text:lower()
+        if AText ~= BText then
+            return AText < BText
+        end
+        return A.Order < B.Order
+    end)
+    return Results
+end
+
 function Library:AddToRegistry(Instance, Properties)
     Library.Registry[Instance] = Properties
 end
@@ -2759,6 +3011,9 @@ function Library:Unload()
         ScreenGui:Destroy()
     end
 
+    table.clear(Library.FeatureRegistry)
+    table.clear(Library.FeatureRegistryById)
+    Library.FeatureSearchUI = nil
     getgenv().Library = nil
 end
 local CheckIcon = Library:GetIcon("check")
@@ -4295,6 +4550,7 @@ do
         Groupbox:Resize()
         Button.Holder = Holder
         table.insert(Groupbox.Elements, Button)
+        Library:RegisterFeature(Button, Groupbox, Info.Idx)
         if Info.Idx then
             Buttons[Info.Idx] = Button
         else
@@ -4473,6 +4729,7 @@ do
         setmetatable(Toggle, BaseAddons)
         Toggle.Holder = Button
         table.insert(Groupbox.Elements, Toggle)
+        Library:RegisterFeature(Toggle, Groupbox, Idx)
         Toggle.Default = Toggle.Value
         Toggles[Idx] = Toggle
         Library:BindDisabledState(Toggle, Info.Disabled)
@@ -4676,6 +4933,7 @@ do
         setmetatable(Toggle, BaseAddons)
         Toggle.Holder = Button
         table.insert(Groupbox.Elements, Toggle)
+        Library:RegisterFeature(Toggle, Groupbox, Idx)
         Toggle.Default = Toggle.Value
         Toggles[Idx] = Toggle
         Library:BindDisabledState(Toggle, Info.Disabled)
@@ -4833,6 +5091,7 @@ do
         Groupbox:Resize()
         Input.Holder = Holder
         table.insert(Groupbox.Elements, Input)
+        Library:RegisterFeature(Input, Groupbox, Idx)
         Input.Default = Input.Value
         if typeof(Info.VerifyValue) == "function" and (Input.Default ~= Input.EmptyReset and Info.VerifyValue(Input.Default) ~= true) then
             Input:SetValue(Input.EmptyReset)
@@ -5104,6 +5363,7 @@ do
         Groupbox:Resize()
         Slider.Holder = Holder
         table.insert(Groupbox.Elements, Slider)
+        Library:RegisterFeature(Slider, Groupbox, Idx)
         Slider.Default = Slider.Value
         Options[Idx] = Slider
         Library:BindDisabledState(Slider, Info.Disabled)
@@ -5883,6 +6143,7 @@ do
         Groupbox:Resize()
         Dropdown.Holder = Holder
         table.insert(Groupbox.Elements, Dropdown)
+        Library:RegisterFeature(Dropdown, Groupbox, Idx)
         Dropdown.Default = Defaults
         Dropdown.DefaultValues = Dropdown.Values
         Options[Idx] = Dropdown
@@ -6422,6 +6683,11 @@ do
             Container = DepboxContainer,
             Elements = {},
             DependencyBoxes = {},
+            Tab = Groupbox.Tab,
+            Name = Groupbox.Name,
+            SubPage = Groupbox.SubPage,
+            Page = Groupbox.Page,
+            RootGroupbox = Groupbox.RootGroupbox or Groupbox,
         }
         function Depbox:Resize()
             DepboxContainer.Size = UDim2.new(1, 0, 0, DepboxList.AbsoluteContentSize.Y / Library.DPIScale)
@@ -10582,6 +10848,7 @@ function Library:CreateWindow(WindowInfo)
     Library.Scheme.Font = WindowInfo.Font
     Library.ToggleKeybind = WindowInfo.ToggleKeybind
     Library.GlobalSearch = WindowInfo.GlobalSearch
+    Library:LoadFeatureFavorites()
     local IsDefaultSearchbarSize = WindowInfo.SearchbarSize == UDim2.fromScale(1, 1)
     local MainFrame
     local Glow
@@ -10591,6 +10858,11 @@ function Library:CreateWindow(WindowInfo)
     local WindowIcon
     local RightWrapper
     local SearchBox
+    local FeatureSearchPanel
+    local FeatureSearchRows
+    local FeatureSearchFavoritesButton
+    local FeatureSearchFavoritesMode = false
+    local RefreshFeatureSearchPanel
     local CurrentTabInfo
     local CurrentTabLabel
     local CurrentTabDescription
@@ -10871,7 +11143,7 @@ function Library:CreateWindow(WindowInfo)
         New("UIPadding", {
             PaddingBottom = UDim.new(0, 8),
             PaddingLeft = UDim.new(0, 28),
-            PaddingRight = UDim.new(0, 8),
+            PaddingRight = UDim.new(0, 36),
             PaddingTop = UDim.new(0, 8),
             Parent = SearchBox,
         })
@@ -10892,6 +11164,261 @@ function Library:CreateWindow(WindowInfo)
                 SizeConstraint = Enum.SizeConstraint.RelativeYY,
                 Parent = SearchBox,
             })
+        end
+        do
+            FeatureSearchFavoritesButton = New("TextButton", {
+                AnchorPoint = Vector2.new(1, 0.5),
+                BackgroundTransparency = 1,
+                Position = UDim2.new(1, -5, 0.5, 0),
+                Size = UDim2.fromOffset(28, 28),
+                Text = "☆",
+                TextColor3 = "FontColor",
+                TextSize = 20,
+                TextTransparency = 0.25,
+                ZIndex = 1202,
+                Parent = SearchBox,
+            })
+            Library:AddTooltip("Favorites", "Show features you pinned from search results.", FeatureSearchFavoritesButton)
+
+            FeatureSearchPanel = New("Frame", {
+                AnchorPoint = Vector2.new(1, 0),
+                BackgroundColor3 = "BackgroundColor",
+                Position = UDim2.new(1, 0, 1, 6),
+                Size = UDim2.new(1, 0, 0, 260),
+                Visible = false,
+                ZIndex = 1200,
+                Parent = SearchBox,
+            })
+            table.insert(Library.Corners, New("UICorner", {
+                CornerRadius = UDim.new(0, WindowInfo.CornerRadius),
+                Parent = FeatureSearchPanel,
+            }))
+            Library:AddOutline(FeatureSearchPanel)
+
+            local FeatureSearchHeader = New("TextLabel", {
+                BackgroundTransparency = 1,
+                Position = UDim2.fromOffset(10, 5),
+                Size = UDim2.new(1, -20, 0, 24),
+                Text = "Search Results",
+                TextSize = 13,
+                TextTransparency = 0.2,
+                TextXAlignment = Enum.TextXAlignment.Left,
+                ZIndex = 1201,
+                Parent = FeatureSearchPanel,
+            })
+
+            local FeatureSearchScroll = New("ScrollingFrame", {
+                AutomaticCanvasSize = Enum.AutomaticSize.Y,
+                BackgroundTransparency = 1,
+                CanvasSize = UDim2.fromScale(0, 0),
+                Position = UDim2.fromOffset(5, 31),
+                ScrollBarImageColor3 = "AccentColor",
+                ScrollBarImageTransparency = 0.25,
+                ScrollBarThickness = Library.IsMobile and 4 or 5,
+                ScrollingDirection = Enum.ScrollingDirection.Y,
+                Size = UDim2.new(1, -10, 1, -36),
+                ZIndex = 1201,
+                Parent = FeatureSearchPanel,
+            })
+            Library:MakeDragScrollable(FeatureSearchScroll)
+
+            FeatureSearchRows = New("Frame", {
+                AutomaticSize = Enum.AutomaticSize.Y,
+                BackgroundTransparency = 1,
+                Size = UDim2.new(1, -5, 0, 0),
+                ZIndex = 1201,
+                Parent = FeatureSearchScroll,
+            })
+            New("UIListLayout", {
+                Padding = UDim.new(0, 4),
+                Parent = FeatureSearchRows,
+            })
+            New("UIPadding", {
+                PaddingBottom = UDim.new(0, 5),
+                PaddingLeft = UDim.new(0, 2),
+                PaddingRight = UDim.new(0, 2),
+                Parent = FeatureSearchRows,
+            })
+
+            local function SetFeatureSearchPanelVisible(State)
+                FeatureSearchPanel.Visible = State == true
+                if Library.FeatureSearchUI then
+                    Library.FeatureSearchUI.Visible = FeatureSearchPanel.Visible
+                end
+            end
+
+            local function NavigateToFeature(Feature)
+                if typeof(Feature) ~= "table" then
+                    return
+                end
+
+                FeatureSearchFavoritesMode = false
+                SearchBox.Text = ""
+                SearchBox:ReleaseFocus()
+                SetFeatureSearchPanelVisible(false)
+
+                if Feature.Tab and typeof(Feature.Tab.Show) == "function" then
+                    Feature.Tab:Show()
+                end
+                if Feature.SubPage and not Feature.SubPage.IsDefault and typeof(Feature.SubPage.Show) == "function" then
+                    Feature.SubPage:Show(true)
+                end
+                if Feature.Groupbox and typeof(Feature.Groupbox.SetCollapsed) == "function" then
+                    Feature.Groupbox:SetCollapsed(false)
+                end
+
+                task.defer(function()
+                    local Holder = Feature.Holder
+                    if typeof(Holder) ~= "Instance" or not Holder.Parent then
+                        return
+                    end
+                    local Scroller = Holder:FindFirstAncestorWhichIsA("ScrollingFrame")
+                    if Scroller then
+                        local Y = Holder.AbsolutePosition.Y - Scroller.AbsolutePosition.Y + Scroller.CanvasPosition.Y - 20
+                        Scroller.CanvasPosition = Vector2.new(Scroller.CanvasPosition.X, math.max(0, Y))
+                    end
+                end)
+            end
+
+            RefreshFeatureSearchPanel = function()
+                if not FeatureSearchRows then
+                    return
+                end
+
+                for _, Child in next, FeatureSearchRows:GetChildren() do
+                    if Child:IsA("GuiObject") then
+                        Child:Destroy()
+                    end
+                end
+
+                local Query = SearchBox.Text
+                local Results = Library:GetFeatureSearchResults(Query, FeatureSearchFavoritesMode)
+                local MaximumResults = Library.IsMobile and 10 or 14
+                local VisibleResults = math.min(#Results, MaximumResults)
+                FeatureSearchHeader.Text = FeatureSearchFavoritesMode
+                    and string.format("Favorites  •  %d", #Results)
+                    or string.format("Search Results  •  %d", #Results)
+                FeatureSearchFavoritesButton.Text = FeatureSearchFavoritesMode and "★" or "☆"
+                FeatureSearchFavoritesButton.TextColor3 = FeatureSearchFavoritesMode and Library.Scheme.AccentColor or Library.Scheme.FontColor
+
+                if #Results == 0 then
+                    local Empty = New("TextLabel", {
+                        BackgroundTransparency = 1,
+                        Size = UDim2.new(1, 0, 0, 42),
+                        Text = FeatureSearchFavoritesMode and "No favorites yet" or "No matching features",
+                        TextSize = 13,
+                        TextTransparency = 0.45,
+                        ZIndex = 1202,
+                        Parent = FeatureSearchRows,
+                    })
+                    Empty:SetAttribute("FeatureSearchResult", true)
+                else
+                    for Index = 1, VisibleResults do
+                        local Feature = Results[Index]
+                        local Row = New("TextButton", {
+                            BackgroundColor3 = "MainColor",
+                            BackgroundTransparency = 0.2,
+                            Size = UDim2.new(1, 0, 0, 46),
+                            Text = "",
+                            ZIndex = 1202,
+                            Parent = FeatureSearchRows,
+                        })
+                        Row:SetAttribute("FeatureSearchResult", true)
+                        table.insert(Library.Corners, New("UICorner", {
+                            CornerRadius = UDim.new(0, math.min(WindowInfo.CornerRadius, 6)),
+                            Parent = Row,
+                        }))
+
+                        New("TextLabel", {
+                            BackgroundTransparency = 1,
+                            Position = UDim2.fromOffset(9, 4),
+                            Size = UDim2.new(1, -50, 0, 19),
+                            Text = Feature.Text,
+                            TextSize = 14,
+                            TextTruncate = Enum.TextTruncate.AtEnd,
+                            TextXAlignment = Enum.TextXAlignment.Left,
+                            ZIndex = 1203,
+                            Parent = Row,
+                        })
+
+                        local PathParts = { Feature.TabName }
+                        if Feature.SubPageName ~= Feature.TabName then
+                            table.insert(PathParts, Feature.SubPageName)
+                        end
+                        if Feature.GroupboxName ~= "" then
+                            table.insert(PathParts, Feature.GroupboxName)
+                        end
+                        New("TextLabel", {
+                            BackgroundTransparency = 1,
+                            Position = UDim2.fromOffset(9, 23),
+                            Size = UDim2.new(1, -50, 0, 17),
+                            Text = table.concat(PathParts, "  ›  ") .. "  •  " .. Feature.Type,
+                            TextSize = 11,
+                            TextTransparency = 0.5,
+                            TextTruncate = Enum.TextTruncate.AtEnd,
+                            TextXAlignment = Enum.TextXAlignment.Left,
+                            ZIndex = 1203,
+                            Parent = Row,
+                        })
+
+                        local FavoriteButton = New("TextButton", {
+                            AnchorPoint = Vector2.new(1, 0.5),
+                            BackgroundTransparency = 1,
+                            Position = UDim2.new(1, -7, 0.5, 0),
+                            Size = UDim2.fromOffset(32, 32),
+                            Text = Library:IsFeatureFavorite(Feature.Id) and "★" or "☆",
+                            TextColor3 = Library:IsFeatureFavorite(Feature.Id) and "AccentColor" or "FontColor",
+                            TextSize = 20,
+                            TextTransparency = Library:IsFeatureFavorite(Feature.Id) and 0 or 0.35,
+                            ZIndex = 1204,
+                            Parent = Row,
+                        })
+
+                        Library:GiveSignal(FavoriteButton.MouseButton1Click:Connect(function()
+                            Library:ToggleFeatureFavorite(Feature.Id)
+                        end))
+                        Library:GiveSignal(Row.MouseButton1Click:Connect(function()
+                            NavigateToFeature(Feature)
+                        end))
+                    end
+                end
+
+                local RowCount = math.max(1, VisibleResults)
+                local PanelWidthScale = (IsDefaultSearchbarSize and CurrentTabInfo.Visible) and 2.5 or 1
+                FeatureSearchPanel.Size = UDim2.new(PanelWidthScale, 0, 0, math.min(330, 42 + RowCount * 50))
+                FeatureSearchScroll.CanvasPosition = Vector2.zero
+            end
+
+            Library.FeatureSearchUI = {
+                Visible = false,
+                Refresh = function(Self)
+                    if RefreshFeatureSearchPanel and (FeatureSearchPanel.Visible or FeatureSearchFavoritesMode or Trim(SearchBox.Text) ~= "") then
+                        RefreshFeatureSearchPanel()
+                    end
+                end,
+                Close = function(Self)
+                    FeatureSearchFavoritesMode = false
+                    SetFeatureSearchPanelVisible(false)
+                end,
+            }
+
+            Library:GiveSignal(FeatureSearchFavoritesButton.MouseButton1Click:Connect(function()
+                if FeatureSearchPanel.Visible and FeatureSearchFavoritesMode then
+                    FeatureSearchFavoritesMode = false
+                    SetFeatureSearchPanelVisible(false)
+                    FeatureSearchFavoritesButton.Text = "☆"
+                    FeatureSearchFavoritesButton.TextColor3 = Library.Scheme.FontColor
+                    return
+                end
+                FeatureSearchFavoritesMode = true
+                if SearchBox.Text ~= "" then
+                    SearchBox.Text = ""
+                else
+                    Library:UpdateSearch("")
+                end
+                RefreshFeatureSearchPanel()
+                SetFeatureSearchPanelVisible(true)
+            end))
         end
         if MoveIcon then
             New("ImageLabel", {
@@ -11450,6 +11977,7 @@ function Library:CreateWindow(WindowInfo)
             ActiveSubPage = nil,
             DefaultSubPage = nil,
             CurrentSubPage = nil,
+            Name = Name,
             Description = Description,
             Sides = {
                 TabLeft,
@@ -12181,6 +12709,7 @@ function Library:CreateWindow(WindowInfo)
                 Holder = GroupboxHolder,
                 Container = GroupboxContainer,
                 Tab = Tab,
+                Name = Info.Name,
                 Side = Info.Side == 2 and 2 or 1,
                 SubPage = Info.SubPage or Tab.CurrentSubPage or Tab.DefaultSubPage,
                 Page = Info.SubPage or Tab.CurrentSubPage or Tab.DefaultSubPage,
@@ -12188,6 +12717,7 @@ function Library:CreateWindow(WindowInfo)
                 Elements = {},
                 Collapsed = false
             }
+            Groupbox.RootGroupbox = Groupbox
             function Groupbox:Resize()
                 local GroupboxSize
                 if self.Collapsed then
@@ -12404,6 +12934,10 @@ function Library:CreateWindow(WindowInfo)
                         RightCover = RightCover
                     },
                     Tab = Tab,
+                    Name = Name,
+                    SubPage = Tabbox.SubPage,
+                    Page = Tabbox.Page,
+                    RootGroupbox = nil,
                     Elements = {},
                     DependencyBoxes = {},
                 }
@@ -12769,6 +13303,7 @@ function Library:CreateWindow(WindowInfo)
             Groupboxes = {},
             Tabboxes = {},
             DependencyGroupboxes = {},
+            Name = Name,
             Description = Description,
             Container = TabContainer,
             WarningBox = {
@@ -12986,10 +13521,12 @@ function Library:CreateWindow(WindowInfo)
                 Holder = GroupboxHolder,
                 Container = GroupboxContainer,
                 Tab = Tab,
+                Name = Info.Name,
                 DependencyBoxes = {},
                 Elements = {},
                 Collapsed = false
             }
+            Groupbox.RootGroupbox = Groupbox
             function Groupbox:Resize()
                 local GroupboxSize
                 if self.Collapsed then
@@ -13186,6 +13723,8 @@ function Library:CreateWindow(WindowInfo)
                         RightCover = RightCover
                     },
                     Tab = Tab,
+                    Name = Name,
+                    RootGroupbox = nil,
                     Elements = {},
                     DependencyBoxes = {},
                 }
@@ -14221,9 +14760,23 @@ function Library:CreateWindow(WindowInfo)
         end
         UpdateMobileToggleButton()
     end
-    SearchBox:GetPropertyChangedSignal("Text"):Connect(function()
-        Library:UpdateSearch(SearchBox.Text)
-    end)
+    Library:GiveSignal(SearchBox:GetPropertyChangedSignal("Text"):Connect(function()
+        local Query = SearchBox.Text
+        Library:UpdateSearch(Query)
+        if Trim(Query) ~= "" then
+            FeatureSearchFavoritesMode = false
+            if RefreshFeatureSearchPanel then
+                RefreshFeatureSearchPanel()
+            end
+            if FeatureSearchPanel then
+                FeatureSearchPanel.Visible = true
+                if Library.FeatureSearchUI then Library.FeatureSearchUI.Visible = true end
+            end
+        elseif not FeatureSearchFavoritesMode and FeatureSearchPanel then
+            FeatureSearchPanel.Visible = false
+            if Library.FeatureSearchUI then Library.FeatureSearchUI.Visible = false end
+        end
+    end))
     Library:GiveSignal(UserInputService.InputBegan:Connect(function(Input: InputObject)
         if Library.Unloaded then
             return
