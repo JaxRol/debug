@@ -10720,7 +10720,7 @@ function Library:Notify(...)
 end
 local BackgroundMedia = {}
 do
-    local MAX_DOWNLOAD = 12 * 1024 * 1024
+    local MAX_DOWNLOAD = 64 * 1024 * 1024
     local MAX_PIXELS = 1024 * 1024
     local MAX_FRAMES = 240
     local MAX_DECODED = 64 * 1024 * 1024
@@ -10818,7 +10818,7 @@ do
     end
     function BackgroundMedia.DecodeGIF(Data, OnFrame, Check)
         Check = Check or function() task.wait() end
-        assert(type(Data) == "string" and #Data <= MAX_DOWNLOAD, "GIF download exceeds 12 MB")
+        assert(type(Data) == "string" and #Data <= MAX_DOWNLOAD, "GIF download exceeds 64 MB")
         assert(string.sub(Data, 1, 6) == "GIF87a" or string.sub(Data, 1, 6) == "GIF89a", "URL did not return a GIF image")
         local Position = 7
         local function Read(Length)
@@ -10959,14 +10959,14 @@ do
             local Status = type(Response) == "table" and tonumber(Response.StatusCode or Response.Status)
             assert(type(Response) == "table" and Response.Success ~= false and (not Status or (Status >= 200 and Status < 300)), "Background URL returned HTTP " .. tostring(Status or "failure"))
             assert(type(Response.Body) == "string" and #Response.Body > 0, "Background URL returned an empty response")
-            assert(#Response.Body <= 12 * 1024 * 1024, "Background download exceeds 12 MB")
+            assert(#Response.Body <= 64 * 1024 * 1024, "Background download exceeds 64 MB")
             return Response.Body
         end
         local Supported, HttpGet = pcall(function() return game.HttpGet end)
         assert(Supported and type(HttpGet) == "function", "This executor does not support request or game:HttpGet")
         local Success, Body = pcall(HttpGet, game, URL)
         assert(Success and type(Body) == "string" and #Body > 0, "This executor could not download the background with game:HttpGet")
-        assert(#Body <= 12 * 1024 * 1024, "Background download exceeds 12 MB")
+        assert(#Body <= 64 * 1024 * 1024, "Background download exceeds 64 MB")
         return Body
     end
     function BackgroundMedia.Load(Source, Check, Media)
@@ -16310,7 +16310,7 @@ function Library:LoadSettingsTab(Window, SettingsInfo)
         Default = tostring(Library.Scheme.BackgroundImage or ""),
         Placeholder = "https://example.com/background.gif",
         Finished = true,
-        Tooltip = "Paste a direct image/GIF link and press Enter. GIFs loop automatically. Max: 12 MB download, 1024 x 1024, 240 frames and 64 MB decoded. Short, small GIFs load faster.",
+        Tooltip = "Paste a direct image/GIF link and press Enter. GIFs loop automatically. Max: 64 MB download, 1024 x 1024, 240 frames and 64 MB decoded. Short, small GIFs load faster.",
         Callback = function(Value)
             Library:SetBackgroundImage(Value)
         end,
