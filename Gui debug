@@ -323,6 +323,7 @@ local Library = {
     LocaleId = ActiveLocaleId,
     LocalizationMode = "Automatic",
     LocalizationEnabled = true,
+    LocalizationApplying = false,
     Scheme = {
         BackgroundColor = Color3.fromRGB(15, 15, 15),
         MainColor = Color3.fromRGB(25, 25, 25),
@@ -1249,11 +1250,32 @@ function Library:TranslateText(Text, Context)
     if not self.LocalizationEnabled or typeof(Text) ~= "string" or Text == "" or not self.Translator then
         return Text
     end
-    local TranslationContext = typeof(Context) == "Instance" and Context or game
-    local Success, Result = pcall(self.Translator.Translate, self.Translator, TranslationContext, Text)
-    if Success and typeof(Result) == "string" and Result ~= "" then
-        return Result
+
+    local Contexts = {}
+    local Added = {}
+    local function AddContext(Value)
+        if typeof(Value) ~= "Instance" or Added[Value] then
+            return
+        end
+        Added[Value] = true
+        table.insert(Contexts, Value)
     end
+
+    AddContext(Context)
+    if typeof(Context) == "Instance" then
+        AddContext(Context:FindFirstAncestorOfClass("ScreenGui"))
+    end
+    AddContext(self.ScreenGui)
+    AddContext(LocalPlayer:FindFirstChildOfClass("PlayerGui"))
+    AddContext(game)
+
+    for _, TranslationContext in next, Contexts do
+        local Success, Result = pcall(self.Translator.Translate, self.Translator, TranslationContext, Text)
+        if Success and typeof(Result) == "string" and Result ~= "" and Result ~= Text then
+            return Result
+        end
+    end
+
     return Text
 end
 
@@ -1267,6 +1289,8 @@ function Library:LocalizeFeature(Feature)
     local DisplayTooltip = self:TranslateText(Feature.SourceTooltip or "", Control.Holder or Context)
     local DisplayDisabledTooltip = self:TranslateText(Feature.SourceDisabledTooltip or "", Control.Holder or Context)
 
+    local PreviousApplying = self.LocalizationApplying
+    self.LocalizationApplying = true
     if typeof(Control.SetText) == "function" then
         pcall(Control.SetText, Control, DisplayText)
     else
@@ -1275,11 +1299,13 @@ function Library:LocalizeFeature(Feature)
             Control.TextLabel.Text = DisplayText
         end
     end
+
     Control.Tooltip = Feature.SourceTooltip ~= nil and DisplayTooltip or nil
     Control.DisabledTooltip = Feature.SourceDisabledTooltip ~= nil and DisplayDisabledTooltip or nil
     if Control.TooltipTable and typeof(Control.TooltipTable.SetText) == "function" then
         Control.TooltipTable:SetText(Control.Tooltip, Control.DisabledTooltip)
     end
+    self.LocalizationApplying = PreviousApplying
 
     Feature.Text = DisplayText
     Feature.DisplayTooltip = DisplayTooltip
@@ -1405,6 +1431,21 @@ function Library:RegisterFeature(Control, Groupbox, Idx)
     Control.SourceText = Feature.SourceText
     Control.SourceTooltip = Feature.SourceTooltip
     Control.SourceDisabledTooltip = Feature.SourceDisabledTooltip
+
+    if typeof(Control.SetText) == "function" and not Control.LocalizationSetTextWrapped then
+        local RawSetText = Control.SetText
+        Control.SetText = function(Self, NewText, ...)
+            if not Library.LocalizationApplying and typeof(NewText) == "string" then
+                Self.SourceText = NewText
+                if Self.FeatureInfo then
+                    Self.FeatureInfo.SourceText = NewText
+                end
+            end
+            return RawSetText(Self, NewText, ...)
+        end
+        Control.LocalizationSetTextWrapped = true
+    end
+
     Library.FeatureRegistryById[Id] = Feature
     table.insert(Library.FeatureRegistry, Feature)
     Library:LocalizeFeature(Feature)
@@ -3213,6 +3254,8 @@ function Library:AddTooltip(InfoStr: string, DisabledInfoStr: string, HoverInsta
         Hovering = false,
         Info = InfoStr,
         DisabledInfo = DisabledInfoStr,
+        SourceInfo = InfoStr,
+        SourceDisabledInfo = DisabledInfoStr,
         Signals = {},
     }
     local function DoHover()
@@ -3220,8 +3263,8 @@ function Library:AddTooltip(InfoStr: string, DisabledInfoStr: string, HoverInsta
             CurrentHoverInstance == HoverInstance
             or Library.ActiveDialog
             or (CurrentMenu and Library:MouseIsOverFrame(CurrentMenu.Menu, Mouse))
-            or (TooltipTable.Disabled and typeof(TooltipTable.DisabledInfo) ~= "string")
-            or (not TooltipTable.Disabled and typeof(TooltipTable.Info) ~= "string")
+            or (TooltipTable.Disabled and typeof(TooltipTable.SourceDisabledInfo) ~= "string")
+            or (not TooltipTable.Disabled and typeof(TooltipTable.SourceInfo) ~= "string")
         then
             return
         end
@@ -3231,7 +3274,8 @@ function Library:AddTooltip(InfoStr: string, DisabledInfoStr: string, HoverInsta
             ParentGui = ScreenGui
         end
         TooltipLabel.Parent = ParentGui
-        TooltipLabel.Text = TooltipTable.Disabled and TooltipTable.DisabledInfo or TooltipTable.Info
+        local SourceTooltip = TooltipTable.Disabled and TooltipTable.SourceDisabledInfo or TooltipTable.SourceInfo
+        TooltipLabel.Text = Library:TranslateText(SourceTooltip, HoverInstance)
         TooltipLabel.Visible = true
         while
             (Library.Toggled or Library.ActiveLoading)
@@ -3265,10 +3309,15 @@ function Library:AddTooltip(InfoStr: string, DisabledInfoStr: string, HoverInsta
         CurrentHoverInstance = nil
     end))
     function TooltipTable:SetText(NewInfoStr, NewDisabledInfoStr)
+        if not Library.LocalizationApplying then
+            TooltipTable.SourceInfo = NewInfoStr
+            TooltipTable.SourceDisabledInfo = NewDisabledInfoStr
+        end
         TooltipTable.Info = NewInfoStr
         TooltipTable.DisabledInfo = NewDisabledInfoStr
         if CurrentHoverInstance == HoverInstance and TooltipLabel then
-            TooltipLabel.Text = TooltipTable.Disabled and TooltipTable.DisabledInfo or TooltipTable.Info
+            local SourceTooltip = TooltipTable.Disabled and TooltipTable.SourceDisabledInfo or TooltipTable.SourceInfo
+            TooltipLabel.Text = Library:TranslateText(SourceTooltip, HoverInstance)
         end
     end
     function TooltipTable:Destroy()
@@ -4626,6 +4675,7 @@ do
         else
             table.insert(Labels, Label)
         end
+        Library:RegisterFeature(Label, Groupbox, Data.Idx)
         return Label
     end
     function Funcs:AddButton(...)
@@ -12700,6 +12750,16 @@ function Library:CreateWindow(WindowInfo)
                     SubPage.DisplayDescription = Library:TranslateText(SubPage.SourceDescription or SubPage.Description or "", game)
                 end
             end
+            for _, Groupbox in next, Tab.Groupboxes do
+                if typeof(Groupbox) == "table" and typeof(Groupbox.RefreshLocalization) == "function" then
+                    Groupbox:RefreshLocalization()
+                end
+            end
+            for _, Tabbox in next, Tab.Tabboxes do
+                if typeof(Tabbox) == "table" and typeof(Tabbox.RefreshLocalization) == "function" then
+                    Tabbox:RefreshLocalization()
+                end
+            end
             if Library.ActiveTab == Tab then
                 Tab:UpdateDisplayedInfo()
             end
@@ -13057,6 +13117,8 @@ function Library:CreateWindow(WindowInfo)
                 Container = GroupboxContainer,
                 Tab = Tab,
                 Name = Info.Name,
+                SourceName = Info.Name,
+                DisplayName = Info.Name,
                 Side = Info.Side == 2 and 2 or 1,
                 SubPage = Info.SubPage or Tab.CurrentSubPage or Tab.DefaultSubPage,
                 Page = Info.SubPage or Tab.CurrentSubPage or Tab.DefaultSubPage,
@@ -13065,6 +13127,12 @@ function Library:CreateWindow(WindowInfo)
                 Collapsed = false
             }
             Groupbox.RootGroupbox = Groupbox
+            function Groupbox:RefreshLocalization()
+                Groupbox.DisplayName = Library:TranslateText(Groupbox.SourceName or Groupbox.Name or "", GroupboxLabel or GroupboxHolder)
+                if GroupboxLabel then
+                    GroupboxLabel.Text = Groupbox.DisplayName
+                end
+            end
             function Groupbox:Resize()
                 local GroupboxSize
                 if self.Collapsed then
@@ -13088,6 +13156,7 @@ function Library:CreateWindow(WindowInfo)
                 Groupbox:Toggle()
             end)
             setmetatable(Groupbox, BaseGroupbox)
+            Groupbox:RefreshLocalization()
             Groupbox:Resize()
 
             local GroupboxKey = tostring(Info.Name or "Groupbox")
@@ -13282,12 +13351,21 @@ function Library:CreateWindow(WindowInfo)
                     },
                     Tab = Tab,
                     Name = Name,
+                    SourceName = Name,
+                    DisplayName = Name,
+                    ButtonLabel = ButtonLabel,
                     SubPage = Tabbox.SubPage,
                     Page = Tabbox.Page,
                     RootGroupbox = nil,
                     Elements = {},
                     DependencyBoxes = {},
                 }
+                function Tab:RefreshLocalization()
+                    Tab.DisplayName = Library:TranslateText(Tab.SourceName or Tab.Name or "", ButtonLabel or Button)
+                    if ButtonLabel then
+                        ButtonLabel.Text = Tab.DisplayName
+                    end
+                end
                 function Tab:Show()
                     if Tabbox.ActiveTab then
                         Tabbox.ActiveTab:Hide()
@@ -13342,8 +13420,16 @@ function Library:CreateWindow(WindowInfo)
                 Button.MouseButton1Click:Connect(Tab.Show)
                 setmetatable(Tab, BaseGroupbox)
                 Tabbox.Tabs[Name] = Tab
+                Tab:RefreshLocalization()
                 Tabbox:UpdateCorners()
                 return Tab
+            end
+            function Tabbox:RefreshLocalization()
+                for _, ChildTab in next, Tabbox.Tabs do
+                    if typeof(ChildTab) == "table" and typeof(ChildTab.RefreshLocalization) == "function" then
+                        ChildTab:RefreshLocalization()
+                    end
+                end
             end
             if Info.Name then
                 local TabboxKey = tostring(Info.Name)
@@ -16183,12 +16269,40 @@ function Library:LoadSettingsTab(Window, SettingsInfo)
         end,
     })
 
-    MenuGroup:AddDropdown("UISettingsLanguage", {
+    local LocalizationToggle = MenuGroup:AddToggle("UISettingsLocalizationEnabled", {
+        Text = "Multi-Language",
+        Default = Library.LocalizationEnabled,
+        Tooltip = "Rewrites feature labels and tooltips using Roblox LocalizationService. Turn this off to restore the original source text.",
+        Callback = function(Value)
+            Library.LocalizationEnabled = Value == true
+            if Library.LocalizationEnabled and Options.UISettingsLanguage then
+                local SelectedLanguage = Options.UISettingsLanguage.Value
+                local LocaleId = LocalizationLanguages[SelectedLanguage] or SelectedLanguage or "auto"
+                local Success, ErrorMessage = Library:SetLocale(LocaleId)
+                if not Success and Library.Notify then
+                    Library:Notify({
+                        Title = "Localization",
+                        Description = tostring(ErrorMessage),
+                        Time = 4,
+                    })
+                end
+            else
+                Library:RefreshLocalization()
+            end
+        end,
+    })
+
+    local LocalizationSettings = MenuGroup:AddDependencyBox()
+
+    LocalizationSettings:AddDropdown("UISettingsLanguage", {
         Text = "Language",
         Values = LocalizationLanguageValues,
         Default = "Automatic (Roblox)",
-        Tooltip = "Uses Roblox LocalizationService Translator. Missing translations fall back to the source text.",
+        Tooltip = "Selects the locale used to rewrite toggle names, labels, buttons, inputs, sliders, dropdown names, tabs, groupboxes, and tooltips. Missing Roblox translations fall back to the original text.",
         Callback = function(Value)
+            if not Library.LocalizationEnabled then
+                return
+            end
             local LocaleId = LocalizationLanguages[Value] or Value
             local Success, ErrorMessage = Library:SetLocale(LocaleId)
             if not Success and Library.Notify then
@@ -16199,6 +16313,10 @@ function Library:LoadSettingsTab(Window, SettingsInfo)
                 })
             end
         end,
+    })
+
+    LocalizationSettings:SetupDependencies({
+        { LocalizationToggle, true },
     })
 
     MenuGroup:AddLabel("Menu bind"):AddKeyPicker("MenuKeybind", {
