@@ -2986,6 +2986,7 @@ function Library:OnUnload(Callback)
     table.insert(Library.UnloadSignals, Callback)
 end
 function Library:Unload()
+    if self.CleanupBackground then self:CleanupBackground() end
     for Index = #Library.Signals, 1, -1 do
         local Connection = table.remove(Library.Signals, Index)
         if Connection and Connection.Connected then
@@ -10717,30 +10718,445 @@ function Library:Notify(...)
     end)
     return Data
 end
+local BackgroundMedia = {}
+do
+    local MAX_DOWNLOAD = 12 * 1024 * 1024
+    local MAX_PIXELS = 1024 * 1024
+    local MAX_FRAMES = 240
+    local MAX_DECODED = 64 * 1024 * 1024
+    local Transparent = string.char(0, 0, 0, 0)
+    local CRC32 = {}
+    for Index = 0, 255 do
+        local Value = Index
+        for _ = 1, 8 do
+            Value = bit32.bxor(bit32.rshift(Value, 1), Value % 2 == 1 and 0xEDB88320 or 0)
+        end
+        CRC32[Index] = Value
+    end
+    local function BE32(Value)
+        return string.char(math.floor(Value / 16777216) % 256, math.floor(Value / 65536) % 256, math.floor(Value / 256) % 256, Value % 256)
+    end
+    local function Checksum(Data, Check)
+        local CRC = 0xFFFFFFFF
+        for Index = 1, #Data do
+            CRC = bit32.bxor(bit32.rshift(CRC, 8), CRC32[bit32.band(bit32.bxor(CRC, string.byte(Data, Index)), 255)])
+            if Index % 32768 == 0 then Check() end
+        end
+        return BE32(bit32.bxor(CRC, 0xFFFFFFFF))
+    end
+    function BackgroundMedia.EncodePNG(Width, Height, RGBA, Check)
+        Check = Check or function() task.wait() end
+        assert(#RGBA == Width * Height * 4, "Invalid background frame")
+        local Rows = {}
+        for Y = 0, Height - 1 do
+            Rows[Y + 1] = "\0" .. string.sub(RGBA, Y * Width * 4 + 1, (Y + 1) * Width * 4)
+        end
+        local Raw = table.concat(Rows)
+        local AdlerA, AdlerB = 1, 0
+        for Index = 1, #Raw do
+            AdlerA = (AdlerA + string.byte(Raw, Index)) % 65521
+            AdlerB = (AdlerB + AdlerA) % 65521
+            if Index % 32768 == 0 then Check() end
+        end
+        local Blocks = {string.char(0x78, 0x01)}
+        for Offset = 1, #Raw, 65535 do
+            local Block = string.sub(Raw, Offset, Offset + 65534)
+            local Length = #Block
+            local Inverse = 65535 - Length
+            Blocks[#Blocks + 1] = string.char(Offset + Length > #Raw and 1 or 0, Length % 256, math.floor(Length / 256), Inverse % 256, math.floor(Inverse / 256)) .. Block
+        end
+        Blocks[#Blocks + 1] = BE32(AdlerB * 65536 + AdlerA)
+        local function Chunk(Kind, Data)
+            return BE32(#Data) .. Kind .. Data .. Checksum(Kind .. Data, Check)
+        end
+        return "\137PNG\r\n\26\n" .. Chunk("IHDR", BE32(Width) .. BE32(Height) .. string.char(8, 6, 0, 0, 0)) .. Chunk("IDAT", table.concat(Blocks)) .. Chunk("IEND", "")
+    end
+    local function DecodeLZW(Data, Minimum, Expected, Check)
+        assert(Minimum >= 2 and Minimum <= 8, "Invalid GIF LZW code size")
+        local Clear = 2 ^ Minimum
+        local Finish = Clear + 1
+        local Dictionary, NextCode, CodeSize, Previous
+        local function Reset()
+            Dictionary = {}
+            for Index = 0, Clear - 1 do Dictionary[Index] = string.char(Index) end
+            NextCode, CodeSize, Previous = Clear + 2, Minimum + 1, nil
+        end
+        Reset()
+        local Offset, Bits, Available, Count, Iterations = 1, 0, 0, 0, 0
+        local Output = {}
+        while true do
+            while Available < CodeSize do
+                assert(Offset <= #Data, "Truncated GIF frame")
+                Bits = Bits + string.byte(Data, Offset) * 2 ^ Available
+                Offset, Available = Offset + 1, Available + 8
+            end
+            local Code = Bits % 2 ^ CodeSize
+            Bits, Available = math.floor(Bits / 2 ^ CodeSize), Available - CodeSize
+            Iterations = Iterations + 1
+            if Iterations % 4096 == 0 then Check() end
+            if Code == Clear then
+                Reset()
+            elseif Code == Finish then
+                break
+            else
+                local Entry = Dictionary[Code]
+                if not Entry and Code == NextCode and Previous then Entry = Previous .. string.sub(Previous, 1, 1) end
+                assert(Entry, "Invalid GIF LZW data")
+                Count = Count + #Entry
+                assert(Count <= Expected, "GIF frame has too many pixels")
+                Output[#Output + 1] = Entry
+                if Previous and NextCode < 4096 then
+                    Dictionary[NextCode] = Previous .. string.sub(Entry, 1, 1)
+                    NextCode = NextCode + 1
+                    if NextCode == 2 ^ CodeSize and CodeSize < 12 then CodeSize = CodeSize + 1 end
+                end
+                Previous = Entry
+            end
+        end
+        assert(Count == Expected, "GIF frame has missing pixels")
+        return table.concat(Output)
+    end
+    function BackgroundMedia.DecodeGIF(Data, OnFrame, Check)
+        Check = Check or function() task.wait() end
+        assert(type(Data) == "string" and #Data <= MAX_DOWNLOAD, "GIF download exceeds 12 MB")
+        assert(string.sub(Data, 1, 6) == "GIF87a" or string.sub(Data, 1, 6) == "GIF89a", "URL did not return a GIF image")
+        local Position = 7
+        local function Read(Length)
+            assert(Position + Length - 1 <= #Data, "Truncated GIF data")
+            local Value = string.sub(Data, Position, Position + Length - 1)
+            Position = Position + Length
+            return Value
+        end
+        local function Byte() return string.byte(Read(1)) end
+        local function Word()
+            local A, B = string.byte(Read(2), 1, 2)
+            return A + B * 256
+        end
+        local function Palette(Count)
+            local Colors = {}
+            for Index = 0, Count - 1 do Colors[Index] = Read(3) .. "\255" end
+            return Colors
+        end
+        local function SubBlocks()
+            local Parts = {}
+            local Length = Byte()
+            while Length > 0 do
+                Parts[#Parts + 1] = Read(Length)
+                if #Parts % 128 == 0 then Check() end
+                Length = Byte()
+            end
+            return table.concat(Parts)
+        end
+        local Width, Height = Word(), Word()
+        assert(Width > 0 and Height > 0 and Width <= 1024 and Height <= 1024 and Width * Height <= MAX_PIXELS, "GIF must be at most 1024 x 1024 pixels")
+        local Packed, BackgroundIndex = Byte(), Byte()
+        Byte()
+        local GlobalPalette = Packed >= 128 and Palette(2 ^ (Packed % 8 + 1)) or nil
+        local Background = GlobalPalette and GlobalPalette[BackgroundIndex] or Transparent
+        local Canvas, Previous, FrameCount = {}, nil, 0
+        local Delay, Disposal, TransparentIndex = 0.1, 0, nil
+        while true do
+            Check()
+            local Kind = Byte()
+            if Kind == 0x3B then
+                break
+            elseif Kind == 0x21 then
+                local Label = Byte()
+                if Label == 0xF9 then
+                    assert(Byte() == 4, "Invalid GIF control block")
+                    local Flags = Byte()
+                    local Duration = Word()
+                    local Index = Byte()
+                    assert(Byte() == 0, "Invalid GIF control terminator")
+                    Disposal = math.floor(Flags / 4) % 8
+                    assert(Disposal <= 3, "Unsupported GIF disposal mode")
+                    Delay = Duration == 0 and 0.1 or math.max(0.02, Duration / 100)
+                    TransparentIndex = Flags % 2 == 1 and Index or nil
+                else
+                    assert(Label ~= 0x01, "GIF text overlays are unsupported; export it as image frames")
+                    SubBlocks()
+                end
+            elseif Kind == 0x2C then
+                FrameCount = FrameCount + 1
+                assert(FrameCount <= MAX_FRAMES, "GIF exceeds 240 frames; use a shorter GIF")
+                assert(FrameCount * Width * Height * 4 <= MAX_DECODED, "GIF exceeds 64 MB decoded; resize or shorten it")
+                local Left, Top, FrameWidth, FrameHeight = Word(), Word(), Word(), Word()
+                assert(FrameWidth > 0 and FrameHeight > 0 and Left + FrameWidth <= Width and Top + FrameHeight <= Height, "Invalid GIF frame bounds")
+                local Flags = Byte()
+                local Colors = Flags >= 128 and Palette(2 ^ (Flags % 8 + 1)) or GlobalPalette
+                assert(Colors, "GIF frame is missing its color palette")
+                local Minimum = Byte()
+                local Indices = DecodeLZW(SubBlocks(), Minimum, FrameWidth * FrameHeight, Check)
+                if FrameCount == 1 then
+                    local Fill = TransparentIndex ~= nil and Transparent or Background
+                    for Index = 1, Width * Height do
+                        Canvas[Index] = Fill
+                        if Index % 16384 == 0 then Check() end
+                    end
+                elseif Previous.Disposal == 2 then
+                    for Y = Previous.Top, Previous.Top + Previous.Height - 1 do
+                        for X = Previous.Left, Previous.Left + Previous.Width - 1 do Canvas[Y * Width + X + 1] = Previous.Clear end
+                        if Y % 16 == 0 then Check() end
+                    end
+                elseif Previous.Disposal == 3 then
+                    Canvas = Previous.Snapshot
+                end
+                local Snapshot
+                if Disposal == 3 then
+                    Snapshot = {}
+                    for Index = 1, #Canvas do
+                        Snapshot[Index] = Canvas[Index]
+                        if Index % 16384 == 0 then Check() end
+                    end
+                end
+                local Rows = {}
+                if math.floor(Flags / 64) % 2 == 1 then
+                    for _, Pass in next, {{0, 8}, {4, 8}, {2, 4}, {1, 2}} do
+                        for Y = Pass[1], FrameHeight - 1, Pass[2] do Rows[#Rows + 1] = Y end
+                    end
+                else
+                    for Y = 0, FrameHeight - 1 do Rows[#Rows + 1] = Y end
+                end
+                local SourceIndex = 1
+                for Row = 1, #Rows do
+                    local Offset = (Top + Rows[Row]) * Width + Left
+                    for X = 1, FrameWidth do
+                        local Index = string.byte(Indices, SourceIndex)
+                        SourceIndex = SourceIndex + 1
+                        if Index ~= TransparentIndex then
+                            assert(Colors[Index], "GIF color index is out of range")
+                            Canvas[Offset + X] = Colors[Index]
+                        end
+                    end
+                    if Row % 16 == 0 then Check() end
+                end
+                OnFrame(Width, Height, table.concat(Canvas), Delay)
+                Previous = {Left = Left, Top = Top, Width = FrameWidth, Height = FrameHeight, Disposal = Disposal, Snapshot = Snapshot, Clear = TransparentIndex ~= nil and Transparent or Background}
+                Delay, Disposal, TransparentIndex = 0.1, 0, nil
+            else
+                error("Invalid GIF block")
+            end
+        end
+        assert(FrameCount > 0, "GIF contains no image frames")
+        return FrameCount
+    end
+end
+do
+    function BackgroundMedia.Cleanup(Media)
+        if not Media then return end
+        if Media.Preloader then pcall(task.cancel, Media.Preloader); Media.Preloader = nil end
+        if not Media.Files then return end
+        if type(delfile) == "function" then
+            for _, Path in next, Media.Files do pcall(delfile, Path) end
+        end
+        Media.Files = nil
+    end
+    function BackgroundMedia.Download(URL)
+        local Request = request or http_request or (syn and syn.request)
+        if type(Request) == "function" then
+            local Success, Response = pcall(Request, {Url = URL, Method = "GET"})
+            if not Success then error("Background download failed: " .. tostring(Response)) end
+            local Status = type(Response) == "table" and tonumber(Response.StatusCode or Response.Status)
+            assert(type(Response) == "table" and Response.Success ~= false and (not Status or (Status >= 200 and Status < 300)), "Background URL returned HTTP " .. tostring(Status or "failure"))
+            assert(type(Response.Body) == "string" and #Response.Body > 0, "Background URL returned an empty response")
+            assert(#Response.Body <= 12 * 1024 * 1024, "Background download exceeds 12 MB")
+            return Response.Body
+        end
+        local Supported, HttpGet = pcall(function() return game.HttpGet end)
+        assert(Supported and type(HttpGet) == "function", "This executor does not support request or game:HttpGet")
+        local Success, Body = pcall(HttpGet, game, URL)
+        assert(Success and type(Body) == "string" and #Body > 0, "This executor could not download the background with game:HttpGet")
+        assert(#Body <= 12 * 1024 * 1024, "Background download exceeds 12 MB")
+        return Body
+    end
+    function BackgroundMedia.Load(Source, Check, Media)
+        local Asset = getcustomasset or getsynasset
+        assert(type(Asset) == "function" and type(writefile) == "function", "URL backgrounds require writefile and getcustomasset/getsynasset")
+        Check()
+        local Body = BackgroundMedia.Download(Source)
+        Check()
+        local Prefix = "ObsidianBackground_" .. HttpService:GenerateGUID(false):gsub("%-", "") .. "_"
+        if type(isfolder) == "function" and type(makefolder) == "function" then
+            local Success = pcall(function()
+                if not isfolder("Obsidian") then makefolder("Obsidian") end
+                if not isfolder("Obsidian/backgrounds") then makefolder("Obsidian/backgrounds") end
+            end)
+            if Success then Prefix = "Obsidian/backgrounds/" .. Prefix end
+        end
+        local function AddFrame(Bytes, Extension, Delay)
+            Check()
+            local Path = Prefix .. tostring(#Media.Frames + 1) .. Extension
+            Media.Files[#Media.Files + 1] = Path
+            writefile(Path, Bytes)
+            Check()
+            local Image = Asset(Path)
+            assert(type(Image) == "string" and Image ~= "", "Executor could not load the downloaded background image")
+            Media.Frames[#Media.Frames + 1] = {Image = Image, Delay = Delay}
+            Media.Duration = Media.Duration + Delay
+        end
+        if Body:sub(1, 6) == "GIF87a" or Body:sub(1, 6) == "GIF89a" then
+            BackgroundMedia.DecodeGIF(Body, function(Width, Height, RGBA, Delay)
+                AddFrame(BackgroundMedia.EncodePNG(Width, Height, RGBA, Check), ".png", Delay)
+            end, Check)
+        elseif Body:sub(1, 8) == "\137PNG\r\n\26\n" then
+            AddFrame(Body, ".png", 0.1)
+        elseif Body:sub(1, 3) == "\255\216\255" then
+            AddFrame(Body, ".jpg", 0.1)
+        elseif Body:sub(1, 2) == "BM" then
+            AddFrame(Body, ".bmp", 0.1)
+        else
+            error("Use a direct GIF, PNG, JPG or BMP URL; webpage links and GIFV/video files are unsupported")
+        end
+        Body = nil
+        Check()
+        local Images = {}
+        for Index = 1, #Media.Frames do Images[Index] = Media.Frames[Index].Image end
+        local Finished, Failed = false, false
+        local Preloader = task.spawn(function()
+            local Success = pcall(function()
+                game:GetService("ContentProvider"):PreloadAsync(Images, function(_, Status)
+                    if Status ~= Enum.AssetFetchStatus.Success then Failed = true end
+                end)
+            end)
+            Failed = Failed or not Success
+            Finished = true
+        end)
+        Media.Preloader = Preloader
+        local Started = os.clock()
+        local Success, Error = pcall(function()
+            while not Finished and os.clock() - Started < 30 do Check(); task.wait() end
+            Check()
+            assert(Finished and not Failed, "Executor could not preload the background frames (failed or timed out)")
+        end)
+        if not Finished then pcall(task.cancel, Preloader) end
+        Media.Preloader = nil
+        if not Success then error(Error, 0) end
+        return Media
+    end
+end
+function Library:StopBackgroundAnimation()
+    if self.BackgroundAnimationConnection then
+        self.BackgroundAnimationConnection:Disconnect()
+        self.BackgroundAnimationConnection = nil
+    end
+end
+function Library:StartBackgroundAnimation()
+    self:StopBackgroundAnimation()
+    local Media = self.BackgroundMedia
+    local Label = self.Window and self.Window.BackgroundImage
+    if not Media or #Media.Frames < 2 or not Label or not self.Scheme.BackgroundImageEnabled or self.Unloaded then return end
+    self.BackgroundAnimationConnection = RunService.Heartbeat:Connect(function(Delta)
+        if self.Unloaded or self.BackgroundMedia ~= Media or not Label.Parent then
+            self:StopBackgroundAnimation()
+            return
+        end
+        if not Label.Visible or not Label.Parent.Visible or not ScreenGui.Enabled then return end
+        Media.Elapsed = (Media.Elapsed + Delta) % Media.Duration
+        local Time, Index = Media.Elapsed, 1
+        while Index < #Media.Frames and Time >= Media.Frames[Index].Delay do
+            Time = Time - Media.Frames[Index].Delay
+            Index = Index + 1
+        end
+        if Media.Index ~= Index then
+            Media.Index = Index
+            Label.Image = Media.Frames[Index].Image
+        end
+    end)
+end
+function Library:CleanupBackground()
+    self.BackgroundGeneration = (self.BackgroundGeneration or 0) + 1
+    self:StopBackgroundAnimation()
+    if self.BackgroundLoadThread then
+        pcall(task.cancel, self.BackgroundLoadThread)
+        self.BackgroundLoadThread = nil
+    end
+    if self.BackgroundMedia and self.Window and self.Window.BackgroundImage then
+        self.Window.BackgroundImage.Image = ""
+        self.Window.BackgroundImage.Visible = false
+    end
+    BackgroundMedia.Cleanup(self.BackgroundPending)
+    BackgroundMedia.Cleanup(self.BackgroundMedia)
+    self.BackgroundPending, self.BackgroundMedia = nil, nil
+end
 function Library:SetBackgroundImageEnabled(State: boolean)
     assert(typeof(State) == "boolean", "Expected boolean for State, got: " .. typeof(State))
     self.Scheme.BackgroundImageEnabled = State
-
     if self.Window and self.Window.BackgroundImage then
         self.Window.BackgroundImage.Visible = State and self.Window.BackgroundImage.Image ~= ""
     end
-
+    if State then self:StartBackgroundAnimation() else self:StopBackgroundAnimation() end
     self:UpdateColorsUsingRegistry()
 end
 function Library:SetBackgroundImage(Image: string | number)
     assert(typeof(Image) == "string" or typeof(Image) == "number", "Expected string/number for Image, got: " .. typeof(Image))
-
-    local ImageData = Library:GetCustomImage(Image)
-    local ImageUrl = typeof(ImageData) == "table" and ImageData.Url or ""
-
-    self.Scheme.BackgroundImage = ImageUrl
-
-    if self.Window and self.Window.BackgroundImage then
-        self.Window.BackgroundImage.Image = ImageUrl
-        self.Window.BackgroundImage.Visible = self.Scheme.BackgroundImageEnabled and ImageUrl ~= ""
+    if self.Unloaded then return false end
+    local Source = tostring(Image):match("^%s*(.-)%s*$")
+    if self.BackgroundPending and self.BackgroundPending.Source == Source then return true end
+    self.BackgroundGeneration = (self.BackgroundGeneration or 0) + 1
+    local Generation = self.BackgroundGeneration
+    -- Each request owns its output files; cancelled loads cannot apply stale frames.
+    if self.BackgroundLoadThread then
+        pcall(task.cancel, self.BackgroundLoadThread)
+        self.BackgroundLoadThread = nil
     end
-
-    self:UpdateColorsUsingRegistry()
+    BackgroundMedia.Cleanup(self.BackgroundPending)
+    self.BackgroundPending = nil
+    self.Scheme.BackgroundImage = Source
+    if not self.Window or not self.Window.BackgroundImage then return true end
+    if self.BackgroundMedia and self.BackgroundMedia.Source == Source then
+        self:StartBackgroundAnimation()
+        return true
+    end
+    local function Apply(Media)
+        self:StopBackgroundAnimation()
+        local Previous = self.BackgroundMedia
+        self.BackgroundMedia = Media
+        local Label = self.Window.BackgroundImage
+        Label.Image = Media.Frames[1] and Media.Frames[1].Image or ""
+        Label.Visible = self.Scheme.BackgroundImageEnabled and Label.Image ~= ""
+        BackgroundMedia.Cleanup(Previous)
+        self:StartBackgroundAnimation()
+        self:UpdateColorsUsingRegistry()
+    end
+    local Media = {Source = Source, Frames = {}, Files = {}, Duration = 0, Index = 1, Elapsed = 0}
+    local ImageData = self:GetCustomImage(Source)
+    local ImageUrl = typeof(ImageData) == "table" and ImageData.Url or ""
+    if ImageUrl == "" and Source:lower():match("^https?://") then
+        self.BackgroundPending = Media
+        self.BackgroundLoadThread = task.defer(function()
+            local LastYield = os.clock()
+            local function Check()
+                assert(not self.Unloaded and Generation == self.BackgroundGeneration, "Background load cancelled")
+                if os.clock() - LastYield >= 0.008 then
+                    task.wait()
+                    LastYield = os.clock()
+                    assert(not self.Unloaded and Generation == self.BackgroundGeneration, "Background load cancelled")
+                end
+            end
+            local Success, Error = pcall(BackgroundMedia.Load, Source, Check, Media)
+            if self.Unloaded or Generation ~= self.BackgroundGeneration then
+                BackgroundMedia.Cleanup(Media)
+                return
+            end
+            self.BackgroundPending, self.BackgroundLoadThread = nil, nil
+            if Success then
+                Apply(Media)
+            else
+                BackgroundMedia.Cleanup(Media)
+                self.Scheme.BackgroundImage = self.BackgroundMedia and self.BackgroundMedia.Source or ""
+                self:Notify({Title = "Background", Description = tostring(Error), Time = 8})
+            end
+        end)
+        return true
+    end
+    if Source ~= "" and ImageUrl == "" then
+        self.Scheme.BackgroundImage = self.BackgroundMedia and self.BackgroundMedia.Source or ""
+        self:Notify({Title = "Background", Description = "Enter an image asset ID or a direct GIF/image URL.", Time = 6})
+        return false
+    end
+    if ImageUrl ~= "" then Media.Frames[1] = {Image = ImageUrl, Delay = 0.1} end
+    Apply(Media)
+    return true
 end
 function Library:SetGlow(State: boolean)
     assert(typeof(State) == "boolean", "Expected boolean for State, got: " .. typeof(State))
@@ -10839,11 +11255,12 @@ function Library:CreateWindow(WindowInfo)
     Library:SetNotifySide(WindowInfo.NotifySide)
     Library.ShowCustomCursor = WindowInfo.ShowCustomCursor
 
-    local InitialBackgroundImageData = Library:GetCustomImage(WindowInfo.BackgroundImage or "")
+    if Library.CleanupBackground then Library:CleanupBackground() end
+    local InitialBackgroundSource = tostring(WindowInfo.BackgroundImage or ""):match("^%s*(.-)%s*$")
+    local InitialBackgroundImageData = Library:GetCustomImage(InitialBackgroundSource)
     local InitialBackgroundImage = typeof(InitialBackgroundImageData) == "table" and InitialBackgroundImageData.Url or ""
-
-    Library.Scheme.BackgroundImageEnabled = WindowInfo.BackgroundImageEnabled == true or InitialBackgroundImage ~= ""
-    Library.Scheme.BackgroundImage = InitialBackgroundImage
+    Library.Scheme.BackgroundImageEnabled = WindowInfo.BackgroundImageEnabled == true or InitialBackgroundSource ~= ""
+    Library.Scheme.BackgroundImage = InitialBackgroundSource
     Library.Scheme.WindowGlow = WindowInfo.Glow
     Library.Scheme.Font = WindowInfo.Font
     Library.ToggleKeybind = WindowInfo.ToggleKeybind
@@ -14801,6 +15218,7 @@ function Library:CreateWindow(WindowInfo)
         Library.IsRobloxFocused = false
     end))
     Library.Window = Window
+    Library:SetBackgroundImage(InitialBackgroundSource)
     return Window
 end
 function Library:CreateLoading(LoadingInfo)
@@ -15888,9 +16306,11 @@ function Library:LoadSettingsTab(Window, SettingsInfo)
     local BackgroundImageSettings = WindowGroup:AddDependencyBox()
 
     BackgroundImageSettings:AddInput("UISettingsBackgroundImage", {
-        Text = "Image ID / URL",
+        Text = "Image ID / Image or GIF URL",
         Default = tostring(Library.Scheme.BackgroundImage or ""),
-        Placeholder = "rbxassetid://...",
+        Placeholder = "https://example.com/background.gif",
+        Finished = true,
+        Tooltip = "Paste a direct image/GIF link and press Enter. GIFs loop automatically. Max: 12 MB download, 1024 x 1024, 240 frames and 64 MB decoded. Short, small GIFs load faster.",
         Callback = function(Value)
             Library:SetBackgroundImage(Value)
         end,
