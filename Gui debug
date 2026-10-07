@@ -4628,31 +4628,82 @@ do
             TextXAlignment = Groupbox.IsKeyTab and Enum.TextXAlignment.Center or Enum.TextXAlignment.Left,
             Parent = Container,
         })
+        local LastWidth = -1
+        local LastMeasuredText = nil
+        local LabelResizeQueued = false
+        local function QueueGroupboxResize()
+            if Groupbox._ResizeQueued then
+                return
+            end
+            Groupbox._ResizeQueued = true
+            task.defer(function()
+                Groupbox._ResizeQueued = false
+                if Library.Unloaded then
+                    return
+                end
+                Groupbox:Resize()
+            end)
+        end
         local function UpdateLabelSize()
-            if not Label.DoesWrap then return end
-            local Width = TextLabel.AbsoluteSize.X
-            if Width <= 0 then return end
-            local _, textHeight = Library:GetTextBounds(Label.Text, TextLabel.FontFace, TextLabel.TextSize, Width)
-            TextLabel.Size = UDim2.new(1, 0, 0, math.max(18, textHeight + 4))
+            if not Label.DoesWrap then
+                return
+            end
+            local Width = math.floor(TextLabel.AbsoluteSize.X + 0.5)
+            if Width <= 0 then
+                return
+            end
+            if Width == LastWidth and Label.Text == LastMeasuredText then
+                return
+            end
+            LastWidth = Width
+            LastMeasuredText = Label.Text
+            local _, TextHeight = Library:GetTextBounds(Label.Text, TextLabel.FontFace, TextLabel.TextSize, Width)
+            local NewHeight = math.max(18, TextHeight + 4)
+            if TextLabel.Size.Y.Offset ~= NewHeight then
+                TextLabel.Size = UDim2.new(1, 0, 0, NewHeight)
+                QueueGroupboxResize()
+            end
+        end
+        local function QueueLabelResize()
+            if LabelResizeQueued then
+                return
+            end
+            LabelResizeQueued = true
+            task.defer(function()
+                LabelResizeQueued = false
+                if Library.Unloaded or not TextLabel.Parent then
+                    return
+                end
+                UpdateLabelSize()
+            end)
         end
         function Label:SetVisible(Visible: boolean)
+            Visible = Visible ~= false
+            if Label.Visible == Visible then
+                return
+            end
             Label.Visible = Visible
-            TextLabel.Visible = Label.Visible
-            Groupbox:Resize()
+            TextLabel.Visible = Visible
+            QueueGroupboxResize()
         end
         function Label:SetText(Text: string)
+            Text = tostring(Text or "")
+            if Label.Text == Text then
+                return
+            end
             Label.Text = Text
             TextLabel.Text = Text
             if Label.DoesWrap then
-                UpdateLabelSize()
+                QueueLabelResize()
             end
-            Groupbox:Resize()
         end
         if Label.DoesWrap then
-            UpdateLabelSize()
+            QueueLabelResize()
             TextLabel:GetPropertyChangedSignal("AbsoluteSize"):Connect(function()
-                UpdateLabelSize()
-                Groupbox:Resize()
+                local Width = math.floor(TextLabel.AbsoluteSize.X + 0.5)
+                if Width > 0 and Width ~= LastWidth then
+                    QueueLabelResize()
+                end
             end)
         else
             New("UIListLayout", {
@@ -4662,7 +4713,7 @@ do
                 Parent = TextLabel,
             })
         end
-        Groupbox:Resize()
+        QueueGroupboxResize()
         Label.TextLabel = TextLabel
         Label.Container = Container
         Label.Holder = TextLabel
