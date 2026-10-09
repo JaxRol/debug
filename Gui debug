@@ -2310,6 +2310,22 @@ local ModalElement = New("TextButton", {
     Parent = ScreenGui,
 })
 local Cursor, CursorCustomImage
+local CursorPreviousMouseIconEnabled
+local CursorEverManaged = false
+
+local function RestoreNativeCursor(ForceVisible)
+    pcall(function() RunService:UnbindFromRenderStep("ShowCursor") end)
+    if Cursor then pcall(function() Cursor.Visible = false end) end
+    local PreviousMouseIconEnabled = CursorPreviousMouseIconEnabled
+    CursorPreviousMouseIconEnabled = nil
+    if Library.IsMobile then return end
+    if ForceVisible and CursorEverManaged then
+        pcall(function() UserInputService.MouseIconEnabled = true end)
+    elseif PreviousMouseIconEnabled ~= nil then
+        pcall(function() UserInputService.MouseIconEnabled = PreviousMouseIconEnabled end)
+    end
+end
+
 do
     Cursor = New("Frame", {
         AnchorPoint = Vector2.new(0.5, 0.5),
@@ -3361,7 +3377,7 @@ function Library:Unload()
     end
 
     if FirstUnload then
-        Cleanup("Stop cursor", function() RunService:UnbindFromRenderStep("ShowCursor") end)
+        Cleanup("Stop cursor", function() RestoreNativeCursor(false) end)
         for Index = #Library.Signals, 1, -1 do
             local Connection = table.remove(Library.Signals, Index)
             if typeof(Connection) == "RBXScriptConnection" then
@@ -3425,6 +3441,7 @@ function Library:Unload()
     if type(Library.FeatureRegistry) == "table" then table.clear(Library.FeatureRegistry) end
     if type(Library.FeatureRegistryById) == "table" then table.clear(Library.FeatureRegistryById) end
     Library.FeatureSearchUI = nil
+    RestoreNativeCursor(true)
     local FullyDestroyed = Library.ScreenGui == nil and (not EffectSystem or EffectSystem.ScreenRoot == nil)
     if FullyDestroyed and getgenv().Library == Library then getgenv().Library = nil end
     Library.Unloading = false
@@ -15076,21 +15093,23 @@ function Library:CreateWindow(WindowInfo)
             ModalElement.Modal = Library.Toggled
         end
         if Library.Toggled and not Library.IsMobile then
-            local OldMouseIconEnabled = UserInputService.MouseIconEnabled
-            pcall(function()
-                RunService:UnbindFromRenderStep("ShowCursor")
-            end)
+            if CursorPreviousMouseIconEnabled == nil then
+                local Success, Value = pcall(function() return UserInputService.MouseIconEnabled end)
+                if Success then CursorPreviousMouseIconEnabled = Value end
+            end
+            CursorEverManaged = true
+            pcall(function() RunService:UnbindFromRenderStep("ShowCursor") end)
             RunService:BindToRenderStep("ShowCursor", Enum.RenderPriority.Last.Value, function()
+                if not (Library.Toggled and not Library.Unloaded and ScreenGui and ScreenGui.Parent) then
+                    RestoreNativeCursor(false)
+                    return
+                end
                 UserInputService.MouseIconEnabled = not Library.ShowCustomCursor
                 Cursor.Position = UDim2.fromOffset(Mouse.X, Mouse.Y)
                 Cursor.Visible = Library.ShowCustomCursor
-                if not (Library.Toggled and ScreenGui and ScreenGui.Parent) then
-                    UserInputService.MouseIconEnabled = OldMouseIconEnabled
-                    Cursor.Visible = false
-                    RunService:UnbindFromRenderStep("ShowCursor")
-                end
             end)
         elseif not Library.Toggled then
+            RestoreNativeCursor(false)
             TooltipLabel.Visible = false
             for _, Option in Library.Options do
                 if Option.Type == "ColorPicker" then
