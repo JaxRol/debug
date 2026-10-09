@@ -1869,6 +1869,7 @@ local ScreenGui = New("ScreenGui", {
 })
 ParentUI(ScreenGui)
 Library.ScreenGui = ScreenGui
+getgenv().ZeroPointActiveScreenGui = ScreenGui
 ScreenGui.DescendantRemoving:Connect(function(Instance)
     Library:RemoveFromRegistry(Instance)
 end)
@@ -3341,51 +3342,71 @@ function Library:OnUnload(Callback)
     table.insert(Library.UnloadSignals, Callback)
 end
 function Library:Unload()
-    if Library.Unloading or Library.Unloaded then return false end
+    if Library.Unloading then return false end
     Library.Unloading = true
+    local FirstUnload = not Library.Unloaded
     Library.Unloaded = true
+    Library.Toggled = false
 
-    local function Cleanup(Callback, ...)
+    local function Cleanup(Label, Callback, ...)
         if typeof(Callback) ~= "function" then return end
         local Success, ErrorMessage = pcall(Callback, ...)
         if not Success then
-            local Message = tostring(ErrorMessage)
-            if not string.find(Message, "lacking capability Plugin", 1, true) then
-                warn("[ZeroPoint GUI] Unload cleanup failed: " .. Message)
-            end
+            warn("[ZeroPoint GUI] " .. Label .. ": " .. tostring(ErrorMessage))
         end
     end
 
-    pcall(function() RunService:UnbindFromRenderStep("ShowCursor") end)
-    for Index = #Library.Signals, 1, -1 do
-        local Connection = table.remove(Library.Signals, Index)
-        if Connection then
-            Cleanup(function()
-                if Connection.Connected then Connection:Disconnect() end
-            end)
-        end
+    local InterfaceGui = Library.ScreenGui or ScreenGui
+    if typeof(InterfaceGui) == "Instance" then
+        Cleanup("Destroy interface", function()
+            InterfaceGui.Enabled = false
+            InterfaceGui:Destroy()
+        end)
     end
-    for Index = #Library.UnloadSignals, 1, -1 do
-        Cleanup(table.remove(Library.UnloadSignals, Index))
+    Library.ScreenGui = nil
+    Library.Window = nil
+    if getgenv().ZeroPointActiveScreenGui == InterfaceGui then
+        getgenv().ZeroPointActiveScreenGui = nil
     end
-    for Index = #Tooltips, 1, -1 do
-        local Tooltip = table.remove(Tooltips, Index)
-        if typeof(Tooltip) == "table" then
-            Cleanup(Tooltip.Destroy, Tooltip)
-        end
-    end
-    if Library.ActiveLoading then
-        Cleanup(Library.ActiveLoading.Destroy, Library.ActiveLoading)
-        Library.ActiveLoading = nil
-    end
-    if EffectSystem and EffectSystem.ScreenRoot then
-        Cleanup(function() EffectSystem.ScreenRoot:Destroy() end)
+
+    if EffectSystem and typeof(EffectSystem.ScreenRoot) == "Instance" then
+        local EffectGui = EffectSystem.ScreenRoot
+        Cleanup("Destroy screen effects", function()
+            EffectGui.Enabled = false
+            EffectGui:Destroy()
+        end)
         EffectSystem.ScreenRoot = nil
     end
-    if ScreenGui then Cleanup(function() ScreenGui:Destroy() end) end
 
-    table.clear(Library.FeatureRegistry)
-    table.clear(Library.FeatureRegistryById)
+    if Library.ActiveLoading then
+        local ActiveLoading = Library.ActiveLoading
+        Library.ActiveLoading = nil
+        Cleanup("Destroy loading interface", ActiveLoading.Destroy, ActiveLoading)
+    end
+
+    if FirstUnload then
+        Cleanup("Stop cursor", function() RunService:UnbindFromRenderStep("ShowCursor") end)
+        for Index = #Library.Signals, 1, -1 do
+            local Connection = table.remove(Library.Signals, Index)
+            if typeof(Connection) == "RBXScriptConnection" then
+                Cleanup("Disconnect signal", function()
+                    if Connection.Connected then Connection:Disconnect() end
+                end)
+            end
+        end
+        for Index = #Tooltips, 1, -1 do
+            local Tooltip = table.remove(Tooltips, Index)
+            if typeof(Tooltip) == "table" then
+                Cleanup("Destroy tooltip", Tooltip.Destroy, Tooltip)
+            end
+        end
+        for Index = #Library.UnloadSignals, 1, -1 do
+            Cleanup("Unload handler", table.remove(Library.UnloadSignals, Index))
+        end
+    end
+
+    if type(Library.FeatureRegistry) == "table" then table.clear(Library.FeatureRegistry) end
+    if type(Library.FeatureRegistryById) == "table" then table.clear(Library.FeatureRegistryById) end
     Library.FeatureSearchUI = nil
     if getgenv().Library == Library then getgenv().Library = nil end
     Library.Unloading = false
