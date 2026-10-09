@@ -2433,24 +2433,20 @@ function Library:MouseIsOverFrame(Frame: GuiObject, Mouse: Vector2): boolean
         and Mouse.Y <= AbsPos.Y + AbsSize.Y
 end
 function Library:SafeCallback(Func: (...any) -> ...any, ...: any)
-    if not (Func and typeof(Func) == "function") then
-        return
-    end
+    if typeof(Func) ~= "function" then return end
     local Result = table.pack(xpcall(Func, function(Error)
-        task.defer(error, debug.traceback(Error, 2))
-        if self.NotifyOnError then
-            self:Notify({
-                Title = "Error",
-                Description = Error,
-                Time = 10,
-                Icon = "circle-x",
-            })
+        local Message = tostring(Error)
+        if not Library.Unloading and not Library.Unloaded then
+            warn("[ZeroPoint GUI] Callback failed: " .. debug.traceback(Message, 2))
+            if self.NotifyOnError then
+                pcall(function()
+                    self:Notify({Title = "Error", Description = Message, Time = 10, Icon = "circle-x"})
+                end)
+            end
         end
-        return Error
+        return Message
     end, ...))
-    if not Result[1] then
-        return nil
-    end
+    if not Result[1] then return nil end
     return table.unpack(Result, 2, Result.n)
 end
 function Library:MakeDraggable(
@@ -3259,6 +3255,7 @@ function Library:AddTooltip(InfoStr: string, DisabledInfoStr: string, HoverInsta
         Signals = {},
     }
     local function DoHover()
+        if Library.Unloaded or Library.Unloading then return end
         if
             CurrentHoverInstance == HoverInstance
             or Library.ActiveDialog
@@ -3278,7 +3275,9 @@ function Library:AddTooltip(InfoStr: string, DisabledInfoStr: string, HoverInsta
         TooltipLabel.Text = Library:TranslateText(SourceTooltip, HoverInstance)
         TooltipLabel.Visible = true
         while
-            (Library.Toggled or Library.ActiveLoading)
+            not Library.Unloaded
+            and not Library.Unloading
+            and (Library.Toggled or Library.ActiveLoading)
             and not Library.ActiveDialog
             and Library:MouseIsOverFrame(HoverInstance, Mouse)
             and not (CurrentMenu and Library:MouseIsOverFrame(CurrentMenu.Menu, Mouse))
@@ -3289,6 +3288,7 @@ function Library:AddTooltip(InfoStr: string, DisabledInfoStr: string, HoverInsta
             )
             RunService.RenderStepped:Wait()
         end
+        if Library.Unloaded then return end
         TooltipLabel.Visible = false
         CurrentHoverInstance = nil
     end
@@ -3323,53 +3323,73 @@ function Library:AddTooltip(InfoStr: string, DisabledInfoStr: string, HoverInsta
     function TooltipTable:Destroy()
         for Index = #TooltipTable.Signals, 1, -1 do
             local Connection = table.remove(TooltipTable.Signals, Index)
-            if Connection and Connection.Connected then
-                Connection:Disconnect()
+            if Connection then
+                pcall(function()
+                    if Connection.Connected then Connection:Disconnect() end
+                end)
             end
         end
         if CurrentHoverInstance == HoverInstance then
-            if TooltipLabel then
-                TooltipLabel.Visible = false
-            end
+            pcall(function() TooltipLabel.Visible = false end)
             CurrentHoverInstance = nil
         end
     end
-    table.insert(Tooltips, TooltipLabel)
+    table.insert(Tooltips, TooltipTable)
     return TooltipTable
 end
 function Library:OnUnload(Callback)
     table.insert(Library.UnloadSignals, Callback)
 end
 function Library:Unload()
-    for Index = #Library.Signals, 1, -1 do
-        local Connection = table.remove(Library.Signals, Index)
-        if Connection and Connection.Connected then
-            Connection:Disconnect()
+    if Library.Unloading or Library.Unloaded then return false end
+    Library.Unloading = true
+    Library.Unloaded = true
+
+    local function Cleanup(Callback, ...)
+        if typeof(Callback) ~= "function" then return end
+        local Success, ErrorMessage = pcall(Callback, ...)
+        if not Success then
+            local Message = tostring(ErrorMessage)
+            if not string.find(Message, "lacking capability Plugin", 1, true) then
+                warn("[ZeroPoint GUI] Unload cleanup failed: " .. Message)
+            end
         end
     end
-    for _, Callback in Library.UnloadSignals do
-        Library:SafeCallback(Callback)
+
+    pcall(function() RunService:UnbindFromRenderStep("ShowCursor") end)
+    for Index = #Library.Signals, 1, -1 do
+        local Connection = table.remove(Library.Signals, Index)
+        if Connection then
+            Cleanup(function()
+                if Connection.Connected then Connection:Disconnect() end
+            end)
+        end
     end
-    for _, Tooltip in Tooltips do
-        Library:SafeCallback(Tooltip.Destroy, Tooltip)
+    for Index = #Library.UnloadSignals, 1, -1 do
+        Cleanup(table.remove(Library.UnloadSignals, Index))
     end
-    Library.Unloaded = true
+    for Index = #Tooltips, 1, -1 do
+        local Tooltip = table.remove(Tooltips, Index)
+        if typeof(Tooltip) == "table" then
+            Cleanup(Tooltip.Destroy, Tooltip)
+        end
+    end
     if Library.ActiveLoading then
-        Library.ActiveLoading:Destroy()
+        Cleanup(Library.ActiveLoading.Destroy, Library.ActiveLoading)
+        Library.ActiveLoading = nil
     end
     if EffectSystem and EffectSystem.ScreenRoot then
-        EffectSystem.ScreenRoot:Destroy()
+        Cleanup(function() EffectSystem.ScreenRoot:Destroy() end)
         EffectSystem.ScreenRoot = nil
     end
-
-    if ScreenGui then
-        ScreenGui:Destroy()
-    end
+    if ScreenGui then Cleanup(function() ScreenGui:Destroy() end) end
 
     table.clear(Library.FeatureRegistry)
     table.clear(Library.FeatureRegistryById)
     Library.FeatureSearchUI = nil
-    getgenv().Library = nil
+    if getgenv().Library == Library then getgenv().Library = nil end
+    Library.Unloading = false
+    return true
 end
 local CheckIcon = Library:GetIcon("check")
 local ArrowIcon = Library:GetIcon("chevron-up")
