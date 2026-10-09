@@ -312,6 +312,7 @@ local Library = {
     DragScrollingInitialized = false,
     Signals = {},
     UnloadSignals = {},
+    UnloadSignalLabels = {},
     OriginalMinSize = Vector2.new(480, 360),
     MinSize = Vector2.new(480, 360),
     DPIScale = 1,
@@ -1858,8 +1859,7 @@ local function ParentUI(UI: Instance, SkipHiddenUI: boolean?)
         SafeParentUI(UI, CoreGui)
         return
     end
-    pcall(protectgui, UI)
-    SafeParentUI(UI, gethui)
+    SafeParentUI(UI, LocalPlayer:WaitForChild("PlayerGui"))
 end
 local ScreenGui = New("ScreenGui", {
     Name = "Obsidian",
@@ -2240,9 +2240,10 @@ ScreenEffectRoot.IgnoreGuiInset = true
 ScreenEffectRoot.ResetOnSpawn = false
 ScreenEffectRoot.ZIndexBehavior = Enum.ZIndexBehavior.Global
 ScreenEffectRoot.Enabled = false
-ScreenEffectRoot.Parent = ScreenGui.Parent
+ScreenEffectRoot.Parent = LocalPlayer:WaitForChild("PlayerGui")
 
 EffectSystem.ScreenRoot = ScreenEffectRoot
+getgenv().ZeroPointActiveScreenEffectsGui = ScreenEffectRoot
 
 local ScreenEffectLayer = CreateEffectLayer("ScreenEffects", ScreenEffectRoot, 1)
 EffectSystem.Targets.Screen.Layer = ScreenEffectLayer
@@ -2434,7 +2435,7 @@ function Library:MouseIsOverFrame(Frame: GuiObject, Mouse: Vector2): boolean
         and Mouse.Y <= AbsPos.Y + AbsSize.Y
 end
 function Library:SafeCallback(Func: (...any) -> ...any, ...: any)
-    if typeof(Func) ~= "function" then return end
+    if Library.Unloading or Library.Unloaded or typeof(Func) ~= "function" then return end
     local Result = table.pack(xpcall(Func, function(Error)
         local Message = tostring(Error)
         if not Library.Unloading and not Library.Unloaded then
@@ -3338,8 +3339,10 @@ function Library:AddTooltip(InfoStr: string, DisabledInfoStr: string, HoverInsta
     table.insert(Tooltips, TooltipTable)
     return TooltipTable
 end
-function Library:OnUnload(Callback)
+function Library:OnUnload(Callback, Label)
+    if typeof(Callback) ~= "function" then return end
     table.insert(Library.UnloadSignals, Callback)
+    Library.UnloadSignalLabels[Callback] = Label or "Unload callback"
 end
 function Library:Unload()
     if Library.Unloading then return false end
@@ -3349,39 +3352,12 @@ function Library:Unload()
     Library.Toggled = false
 
     local function Cleanup(Label, Callback, ...)
-        if typeof(Callback) ~= "function" then return end
+        if typeof(Callback) ~= "function" then return false end
         local Success, ErrorMessage = pcall(Callback, ...)
         if not Success then
             warn("[ZeroPoint GUI] " .. Label .. ": " .. tostring(ErrorMessage))
         end
-    end
-
-    local InterfaceGui = Library.ScreenGui or ScreenGui
-    if typeof(InterfaceGui) == "Instance" then
-        Cleanup("Destroy interface", function()
-            InterfaceGui.Enabled = false
-            InterfaceGui:Destroy()
-        end)
-    end
-    Library.ScreenGui = nil
-    Library.Window = nil
-    if getgenv().ZeroPointActiveScreenGui == InterfaceGui then
-        getgenv().ZeroPointActiveScreenGui = nil
-    end
-
-    if EffectSystem and typeof(EffectSystem.ScreenRoot) == "Instance" then
-        local EffectGui = EffectSystem.ScreenRoot
-        Cleanup("Destroy screen effects", function()
-            EffectGui.Enabled = false
-            EffectGui:Destroy()
-        end)
-        EffectSystem.ScreenRoot = nil
-    end
-
-    if Library.ActiveLoading then
-        local ActiveLoading = Library.ActiveLoading
-        Library.ActiveLoading = nil
-        Cleanup("Destroy loading interface", ActiveLoading.Destroy, ActiveLoading)
+        return Success
     end
 
     if FirstUnload then
@@ -3394,23 +3370,65 @@ function Library:Unload()
                 end)
             end
         end
+
+        local Callbacks = table.clone(Library.UnloadSignals)
+        table.clear(Library.UnloadSignals)
+        for Index = 1, #Callbacks do
+            local Callback = Callbacks[Index]
+            Cleanup(Library.UnloadSignalLabels[Callback] or ("Unload callback " .. Index), Callback)
+            Library.UnloadSignalLabels[Callback] = nil
+        end
+
         for Index = #Tooltips, 1, -1 do
             local Tooltip = table.remove(Tooltips, Index)
             if typeof(Tooltip) == "table" then
                 Cleanup("Destroy tooltip", Tooltip.Destroy, Tooltip)
             end
         end
-        for Index = #Library.UnloadSignals, 1, -1 do
-            Cleanup("Unload handler", table.remove(Library.UnloadSignals, Index))
+    end
+
+    if Library.ActiveLoading then
+        local ActiveLoading = Library.ActiveLoading
+        Library.ActiveLoading = nil
+        Cleanup("Destroy loading interface", ActiveLoading.Destroy, ActiveLoading)
+    end
+
+    if EffectSystem and typeof(EffectSystem.ScreenRoot) == "Instance" then
+        local EffectGui = EffectSystem.ScreenRoot
+        local Success = Cleanup("Destroy screen effects", function()
+            EffectGui:Destroy()
+        end)
+        if not Success then pcall(function() EffectGui.Enabled = false end) end
+        if Success then
+            EffectSystem.ScreenRoot = nil
+            if getgenv().ZeroPointActiveScreenEffectsGui == EffectGui then
+                getgenv().ZeroPointActiveScreenEffectsGui = nil
+            end
+        end
+    end
+
+    local InterfaceGui = Library.ScreenGui or ScreenGui
+    if typeof(InterfaceGui) == "Instance" then
+        local Success = Cleanup("Destroy interface", function()
+            InterfaceGui:Destroy()
+        end)
+        if not Success then pcall(function() InterfaceGui.Enabled = false end) end
+        if Success then
+            Library.ScreenGui = nil
+            Library.Window = nil
+            if getgenv().ZeroPointActiveScreenGui == InterfaceGui then
+                getgenv().ZeroPointActiveScreenGui = nil
+            end
         end
     end
 
     if type(Library.FeatureRegistry) == "table" then table.clear(Library.FeatureRegistry) end
     if type(Library.FeatureRegistryById) == "table" then table.clear(Library.FeatureRegistryById) end
     Library.FeatureSearchUI = nil
-    if getgenv().Library == Library then getgenv().Library = nil end
+    local FullyDestroyed = Library.ScreenGui == nil and (not EffectSystem or EffectSystem.ScreenRoot == nil)
+    if FullyDestroyed and getgenv().Library == Library then getgenv().Library = nil end
     Library.Unloading = false
-    return true
+    return FullyDestroyed
 end
 local CheckIcon = Library:GetIcon("check")
 local ArrowIcon = Library:GetIcon("chevron-up")
@@ -9325,7 +9343,7 @@ do
         Library:OnUnload(function()
             Catalog:StopPreview(true)
             if Catalog.Enabled then Catalog:Restore() end
-        end)
+        end, "Animation pack cleanup")
         Library:GiveSignal(LocalPlayer.CharacterAdded:Connect(function(Character)
             Catalog:StopPreview(true)
             if Overlay.Visible and Catalog.SelectedResult then
@@ -10810,7 +10828,7 @@ do
         Library:OnUnload(function()
             Catalog:StopPreview(true)
             Catalog:StopFullPreview(true)
-        end)
+        end, "Animation catalog cleanup")
 
         Library:GiveSignal(LocalPlayer.CharacterAdded:Connect(function(Character)
             Catalog:StopPreview(true)
@@ -16021,7 +16039,7 @@ do
         _WMFPSConn = nil
         _WMPositionConn = nil
         _WMResetConn = nil
-    end)
+    end, "Watermark cleanup")
     Library.WatermarkConfig = {
         ShowWatermark = false,
         ScriptName = "Script",
@@ -16039,6 +16057,7 @@ do
     end
 
     function Library:SetupWatermark(config)
+        if Library.Unloading or Library.Unloaded then return end
         config = config or {}
         for k, v in pairs(config) do
             Library.WatermarkConfig[k] = v
@@ -16060,13 +16079,7 @@ do
         _WMGui.ResetOnSpawn = false
         _WMGui.ZIndexBehavior = Enum.ZIndexBehavior.Sibling
         _WMGui.DisplayOrder = 999
-        local ok = pcall(function() _WMGui.Parent = gethui() end)
-        if not ok then
-            pcall(function() _WMGui.Parent = cloneref(game:GetService("CoreGui")) end)
-        end
-        if not _WMGui.Parent then
-            _WMGui.Parent = lp:WaitForChild("PlayerGui")
-        end
+        _WMGui.Parent = lp:WaitForChild("PlayerGui")
         _WMFrame = Instance.new("Frame")
         _WMFrame.Name = "WatermarkFrame"
         _WMFrame.BackgroundColor3 = cfg.BackgroundColor
@@ -16220,23 +16233,28 @@ do
             Frame = _WMFrame,
             Label = _WMLabel,
             SetVisible = function(_, v)
+                if Library.Unloaded then return end
                 Library.WatermarkConfig.ShowWatermark = v
-                _WMFrame.Visible = v
+                if _WMFrame then _WMFrame.Visible = v end
             end,
             SetScriptName = function(_, v)
+                if Library.Unloaded then return end
                 Library.WatermarkConfig.ScriptName = v
             end,
             SetTextColor = function(_, v)
+                if Library.Unloaded then return end
                 Library.WatermarkConfig.TextColor = v
-                _WMLabel.TextColor3 = v
+                if _WMLabel then _WMLabel.TextColor3 = v end
             end,
             SetBackgroundColor = function(_, v)
+                if Library.Unloaded then return end
                 Library.WatermarkConfig.BackgroundColor = v
-                _WMFrame.BackgroundColor3 = v
+                if _WMFrame then _WMFrame.BackgroundColor3 = v end
             end,
             SetBackgroundTransparency = function(_, v)
+                if Library.Unloaded then return end
                 Library.WatermarkConfig.BackgroundTransparency = v
-                _WMFrame.BackgroundTransparency = v
+                if _WMFrame then _WMFrame.BackgroundTransparency = v end
             end,
             ShowName = function(_, v) Library.WatermarkConfig.ShowName = v end,
             ShowFPS = function(_, v) Library.WatermarkConfig.ShowFPS = v end,
