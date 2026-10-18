@@ -12281,25 +12281,28 @@ function Library:CreateWindow(WindowInfo)
                 BackgroundTransparency = 1,
                 CanvasSize = UDim2.fromScale(0, 0),
                 Position = UDim2.fromOffset(2, 2),
-                ScrollBarThickness = 0,
+                ScrollBarImageColor3 = "AccentColor",
+                ScrollBarImageTransparency = 0,
+                ScrollBarThickness = Library.IsMobile and 6 or 8,
                 ScrollingDirection = Enum.ScrollingDirection.X,
-                Size = UDim2.new(1, -4, 0, 36),
+                Size = UDim2.new(1, -4, 0, 48),
                 Visible = false,
                 Parent = TabContainer,
             })
             New("UIListLayout", {
                 FillDirection = Enum.FillDirection.Horizontal,
                 Padding = UDim.new(0, 6),
-                VerticalAlignment = Enum.VerticalAlignment.Center,
+                VerticalAlignment = Enum.VerticalAlignment.Top,
                 Parent = SubPageBar,
             })
             New("UIPadding", {
+                PaddingTop = UDim.new(0, 3),
                 PaddingLeft = UDim.new(0, 2),
                 PaddingRight = UDim.new(0, 2),
                 Parent = SubPageBar,
             })
             SubPageDivider = Library:MakeLine(TabContainer, {
-                Position = UDim2.fromOffset(0, 40),
+                Position = UDim2.fromOffset(0, 52),
                 Size = UDim2.new(1, 0, 0, 1),
             })
             SubPageDivider.Visible = false
@@ -13055,7 +13058,7 @@ function Library:CreateWindow(WindowInfo)
             end
         end
         function Tab:RefreshSides()
-            local SubPageOffset = SubPageBar.Visible and 42 or 0
+            local SubPageOffset = SubPageBar.Visible and 56 or 0
             local WarningOffset = WarningBoxHolder.Visible and WarningBox.Size.Y.Offset + 8 or 0
             local Offset = SubPageOffset + WarningOffset
 
