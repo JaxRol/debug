@@ -294,7 +294,7 @@ local Library = {
     Toggles = Toggles,
     Options = Options,
 
-    DiscordInviteURL = "",
+    DiscordInviteURL = "https://discord.gg/qDmVw9BxTd",
     DiscordPopupEnabled = true,
     DiscordPopupShown = false,
     DiscordPopupStateFile = "ZeroPoint/DiscordInviteDismissed.txt",
