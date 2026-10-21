@@ -1,5 +1,3 @@
-
-
 local cloneref = (cloneref or clonereference or function(instance: any)
     return instance
 end)
@@ -17157,6 +17155,160 @@ function Library:LoadSettingsTab(Window, SettingsInfo)
                         return ConfigsGroup
                     end,
                 })
+
+                local SyncChannel = tostring(SaveManager.SubFolder or ScriptName)
+                local SyncFile = tostring(SaveManager.Folder) .. "/ConfigSync_" .. SyncChannel:gsub("[^%w_%-]", "_") .. ".txt"
+
+                local function ReadSyncPacket()
+                    if typeof(isfile) ~= "function" or typeof(readfile) ~= "function" then
+                        return nil
+                    end
+
+                    local Checked, Exists = pcall(isfile, SyncFile)
+                    if not Checked or not Exists then
+                        return nil
+                    end
+
+                    local ReadSuccess, Content = pcall(readfile, SyncFile)
+                    if not ReadSuccess or typeof(Content) ~= "string" or Content == "" then
+                        return nil
+                    end
+
+                    local DecodeSuccess, Packet = pcall(HttpService.JSONDecode, HttpService, Content)
+                    if not DecodeSuccess or typeof(Packet) ~= "table" then
+                        return nil
+                    end
+
+                    if Packet.Version ~= 1 or Packet.Channel ~= SyncChannel
+                        or typeof(Packet.Id) ~= "string" or Packet.Id == ""
+                        or typeof(Packet.Name) ~= "string" or Packet.Name == ""
+                        or typeof(Packet.Data) ~= "string" or Packet.Data == "" then
+                        return nil
+                    end
+
+                    return Packet
+                end
+
+                local InitialPacket = ReadSyncPacket()
+                local LastSyncId = InitialPacket and InitialPacket.Id or nil
+
+                task.spawn(function()
+                    while not Library.Unloaded and Library.SettingsTab == SettingsData do
+                        task.wait(1)
+                        if Library.Unloaded or Library.SettingsTab ~= SettingsData then
+                            break
+                        end
+
+                        local Packet = ReadSyncPacket()
+                        if Packet and Packet.Id ~= LastSyncId then
+                            LastSyncId = Packet.Id
+                            local Ran, Applied, LoadError = pcall(SaveManager.ImportConfig, SaveManager, Packet.Data)
+                            if Ran and Applied then
+                                Library:Notify({
+                                    Title = "Config Sync",
+                                    Description = string.format("Force loaded %q from another instance.", Packet.Name),
+                                    Time = 4,
+                                    Icon = "circle-check",
+                                })
+                            else
+                                Library:Notify({
+                                    Title = "Config Sync Error",
+                                    Description = "Could not apply shared config: " .. tostring(Ran and LoadError or Applied),
+                                    Time = 5,
+                                    Icon = "circle-x",
+                                })
+                            end
+                        end
+                    end
+                end)
+
+                ConfigsGroup:AddDivider()
+                ConfigsGroup:AddLabel("Cross-instance loading requires a shared executor filesystem.")
+                ConfigsGroup:AddButton("Force Load to All Instances", function()
+                    local ConfigName = Options.SaveManager_ConfigList and Options.SaveManager_ConfigList.Value
+                    if typeof(ConfigName) ~= "string" or ConfigName == "" then
+                        Library:Notify({
+                            Title = "Config Sync",
+                            Description = "Select a config from the Config List first.",
+                            Time = 4,
+                            Icon = "triangle-alert",
+                        })
+                        return
+                    end
+
+                    if typeof(SaveManager.ExportConfig) ~= "function" or typeof(SaveManager.ImportConfig) ~= "function" then
+                        Library:Notify({
+                            Title = "Config Sync Error",
+                            Description = "This SaveManager does not support config export/import.",
+                            Time = 5,
+                            Icon = "circle-x",
+                        })
+                        return
+                    end
+
+                    local ExportRan, Exported, DataOrError = pcall(SaveManager.ExportConfig, SaveManager, ConfigName)
+                    if not ExportRan or not Exported or typeof(DataOrError) ~= "string" then
+                        Library:Notify({
+                            Title = "Config Sync Error",
+                            Description = "Could not read selected config: " .. tostring(ExportRan and DataOrError or Exported),
+                            Time = 5,
+                            Icon = "circle-x",
+                        })
+                        return
+                    end
+
+                    local ImportRan, Imported, ImportError = pcall(SaveManager.ImportConfig, SaveManager, DataOrError)
+                    if not ImportRan or not Imported then
+                        Library:Notify({
+                            Title = "Config Sync Error",
+                            Description = "Could not load local config: " .. tostring(ImportRan and ImportError or Imported),
+                            Time = 5,
+                            Icon = "circle-x",
+                        })
+                        return
+                    end
+
+                    if typeof(writefile) ~= "function" or typeof(isfile) ~= "function" or typeof(readfile) ~= "function" then
+                        Library:Notify({
+                            Title = "Config Sync",
+                            Description = "Loaded locally. Shared file functions are unavailable, so other instances were not notified.",
+                            Time = 5,
+                            Icon = "triangle-alert",
+                        })
+                        return
+                    end
+
+                    local Packet = {
+                        Version = 1,
+                        Channel = SyncChannel,
+                        Id = HttpService:GenerateGUID(false),
+                        Name = ConfigName,
+                        Data = DataOrError,
+                    }
+                    local EncodeRan, Encoded = pcall(HttpService.JSONEncode, HttpService, Packet)
+                    local WriteRan, WriteError = false, "could not encode sync message"
+                    if EncodeRan and typeof(Encoded) == "string" then
+                        WriteRan, WriteError = pcall(writefile, SyncFile, Encoded)
+                    end
+
+                    if not WriteRan then
+                        Library:Notify({
+                            Title = "Config Sync Error",
+                            Description = "Loaded locally, but the broadcast failed: " .. tostring(WriteError),
+                            Time = 5,
+                            Icon = "circle-x",
+                        })
+                        return
+                    end
+
+                    LastSyncId = Packet.Id
+                    Library:Notify({
+                        Title = "Config Sync",
+                        Description = string.format("Force loaded %q and sent it to instances sharing the same files.", ConfigName),
+                        Time = 4,
+                        Icon = "circle-check",
+                    })
+                end)
 
                 local AutoSaveGeneration = 0
                 local function RestartAutoSave()
