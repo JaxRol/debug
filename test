@@ -297,7 +297,7 @@ local Library = {
     DiscordInviteURL = "https://discord.gg/qDmVw9BxTd",
     DiscordPopupEnabled = true,
     DiscordPopupShown = false,
-    DiscordPopupStateFile = "ZeroPoint/DiscordInviteDismissed.txt",
+    DiscordPopupStateFile = "ZeroPoint/DiscordInviteDismissed_v2.txt",
     DiscordLogoImage = "rbxassetid://18977771125",
     DiscordPopup = nil,
     FeatureRegistry = {},
@@ -11301,7 +11301,7 @@ function Library:SetDiscordInvite(URL: string)
 end
 
 function Library:IsDiscordPopupSuppressed()
-    if getgenv().ZeroPointDiscordPopupSuppressed == true then return true end
+    if getgenv().ZeroPointDiscordPopupSuppressedV2 == true then return true end
     if typeof(isfile) == "function" and typeof(readfile) == "function" then
         local Success, IsHidden = pcall(function()
             return isfile(self.DiscordPopupStateFile)
@@ -11313,7 +11313,7 @@ function Library:IsDiscordPopupSuppressed()
 end
 
 function Library:SetDiscordPopupSuppressed(Value: boolean)
-    getgenv().ZeroPointDiscordPopupSuppressed = Value == true
+    getgenv().ZeroPointDiscordPopupSuppressedV2 = Value == true
     if typeof(writefile) ~= "function" then return end
     pcall(function()
         if typeof(isfolder) == "function" and typeof(makefolder) == "function" then
@@ -11340,7 +11340,15 @@ function Library:ShowDiscordPopup(Manual: boolean?)
             return nil
         end
     end
-    self.DiscordPopupShown = true
+    local PopupGui = New("ScreenGui", {
+        Name = "ZeroPointDiscordPopupGui",
+        DisplayOrder = math.min(ScreenGui.DisplayOrder + 1, 2147483647),
+        IgnoreGuiInset = true,
+        ResetOnSpawn = false,
+        Enabled = true,
+        ZIndexBehavior = Enum.ZIndexBehavior.Global,
+        Parent = ScreenGui.Parent,
+    })
 
     local Blurple = Color3.fromRGB(88, 101, 242)
     local CardWidth, CardHeight = 420, 384
@@ -11353,7 +11361,7 @@ function Library:ShowDiscordPopup(Manual: boolean?)
         Size = UDim2.fromScale(1, 1),
         Text = "",
         ZIndex = 20000,
-        Parent = ScreenGui,
+        Parent = PopupGui,
     })
     local Card = New("Frame", {
         Name = "DiscordInvitation",
@@ -11546,7 +11554,7 @@ function Library:ShowDiscordPopup(Manual: boolean?)
         local Closing = TweenService:Create(Scale, TweenInfo.new(0.16), { Scale = TargetScale * 0.92 })
         Closing:Play()
         task.delay(0.18, function()
-            if Overlay and Overlay.Parent then Overlay:Destroy() end
+            if PopupGui and PopupGui.Parent then PopupGui:Destroy() end
         end)
     end
     self.DiscordPopup = Prompt
@@ -11576,7 +11584,6 @@ function Library:ShowDiscordPopup(Manual: boolean?)
             Copied = Success
         end
         if Copied then
-            Library:SetDiscordPopupSuppressed(true)
             Status.Text = "Link copied! Paste it in your browser."
             Join.Text = "Copied!"
             task.delay(1.8, function() Prompt:Dismiss() end)
@@ -11606,6 +11613,7 @@ function Library:ShowDiscordPopup(Manual: boolean?)
     TweenService:Create(Scale, TweenInfo.new(0.27, Enum.EasingStyle.Back, Enum.EasingDirection.Out), {
         Scale = TargetScale,
     }):Play()
+    self.DiscordPopupShown = true
     return Prompt
 end
 
@@ -15411,9 +15419,13 @@ function Library:CreateWindow(WindowInfo)
         end
         MainFrame.Visible = Library.Toggled
         if Library.Toggled and not Library.ActiveLoading and WindowInfo.ShowDiscordPrompt ~= false then
-            task.defer(function()
-                if Library.Toggled and not Library.Unloaded then
-                    Library:ShowDiscordPopup(false)
+            task.delay(0.35, function()
+                if Library.Toggled and not Library.Unloaded and not Library.ActiveLoading then
+                    local Success, ErrorMessage = pcall(Library.ShowDiscordPopup, Library, false)
+                    if not Success then
+                        Library.DiscordPopupShown = false
+                        warn("[ZeroPoint Discord] Failed to display popup: " .. tostring(ErrorMessage))
+                    end
                 end
             end)
         elseif not Library.Toggled and Library.DiscordPopup then
@@ -15452,9 +15464,12 @@ function Library:CreateWindow(WindowInfo)
                     RestoreNativeCursor(false)
                     return
                 end
-                UserInputService.MouseIconEnabled = not Library.ShowCustomCursor
+                local DiscordPromptVisible = Library.DiscordPopup
+                    and Library.DiscordPopup.Overlay
+                    and Library.DiscordPopup.Overlay.Parent ~= nil
+                UserInputService.MouseIconEnabled = not Library.ShowCustomCursor or DiscordPromptVisible == true
                 Cursor.Position = UDim2.fromOffset(Mouse.X, Mouse.Y)
-                Cursor.Visible = Library.ShowCustomCursor
+                Cursor.Visible = Library.ShowCustomCursor and not DiscordPromptVisible
             end)
         elseif not Library.Toggled then
             RestoreNativeCursor(false)
@@ -15560,7 +15575,11 @@ function Library:CreateWindow(WindowInfo)
         Window:SetSidebarWidth(WindowInfo.SidebarCompactWidth)
     end
     if WindowInfo.AutoShow and not Library.ActiveLoading then
-        task.spawn(Library.Toggle)
+        task.defer(function()
+            if not Library.Unloaded and Library.Toggle then
+                Library:Toggle(true)
+            end
+        end)
     end
     if Library.IsMobile then
         local ToggleButton
@@ -16807,6 +16826,12 @@ function Library:LoadSettingsTab(Window, SettingsInfo)
     end
 
     MenuGroup:AddButton("Discord Server", function()
+        Library:ShowDiscordPopup(true)
+    end)
+
+    MenuGroup:AddButton("Reset Discord Prompt", function()
+        Library:SetDiscordPopupSuppressed(false)
+        Library.DiscordPopupShown = false
         Library:ShowDiscordPopup(true)
     end)
 
