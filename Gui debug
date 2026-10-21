@@ -293,6 +293,13 @@ local Library = {
     Buttons = Buttons,
     Toggles = Toggles,
     Options = Options,
+
+    DiscordInviteURL = "https://discord.gg/qDmVw9BxTd",
+    DiscordPopupEnabled = true,
+    DiscordPopupShown = false,
+    DiscordPopupStateFile = "ZeroPoint/DiscordInviteDismissed_v2.txt",
+    DiscordLogoImage = "rbxassetid://18977771125",
+    DiscordPopup = nil,
     FeatureRegistry = {},
     FeatureRegistryById = {},
     FeatureRegistrySerial = 0,
@@ -419,6 +426,7 @@ local Templates = {
         Size = UDim2.fromOffset(600, 520),
         IconSize = UDim2.fromOffset(30, 30),
         AutoShow = true,
+        ShowDiscordPrompt = true,
         Center = true,
         Resizable = true,
         Glow = true,
@@ -3366,6 +3374,9 @@ function Library:Unload()
     local FirstUnload = not Library.Unloaded
     Library.Unloaded = true
     Library.Toggled = false
+    if Library.DiscordPopup then
+        pcall(function() Library.DiscordPopup:Dismiss() end)
+    end
 
     local function Cleanup(Label, Callback, ...)
         if typeof(Callback) ~= "function" then return false end
@@ -6035,7 +6046,7 @@ do
 				Info.MaxVisibleDropdownItems * ItemHeight
 			)
 
-			-- Space for the Select All/Deselect All buttons.
+
 			local MultiButtonHeight = Info.Multi and 29 or 0
 			local Y = ItemsHeight + MultiButtonHeight
 
@@ -7722,8 +7733,8 @@ do
                 if not Animation or not Animation:IsA("Animation") then return end
                 local ResolvedId = self:NormalizeAssetId(Animation.AnimationId)
 
-                -- Catalog animation items are wrapper assets. Their catalog ID is not
-                -- necessarily a playable AnimationClip ID, so never return it as fallback.
+
+
                 if not ResolvedId or ResolvedId == CatalogId or SeenIds[ResolvedId] then return end
 
                 SeenIds[ResolvedId] = true
@@ -7762,8 +7773,8 @@ do
                 return #ResolvedIds > 0
             end
 
-            -- Use the normal Roblox asset path first. It is the quickest path in
-            -- executor environments and avoids multiple deserializations when it works.
+
+
             TryGetObjects("rbxassetid://" .. CatalogId)
 
             if #ResolvedIds == 0 then
@@ -7774,8 +7785,8 @@ do
                 TryGetObjects("http://www.roblox.com/Asset/?id=" .. CatalogId)
             end
 
-            -- LoadAsset is normally server-restricted, but some executor environments
-            -- expose it. Keep it as a pcall fallback without depending on it.
+
+
             if #ResolvedIds == 0 and InsertService then
                 local Success, Model = pcall(InsertService.LoadAsset, InsertService, tonumber(CatalogId))
                 if Success and typeof(Model) == "Instance" then
@@ -7909,7 +7920,7 @@ do
                 end
             end
 
-            -- Resolve obvious slot names first so useful locomotion slots become ready sooner.
+
             local Priority = {
                 Idle = 1,
                 Walk = 2,
@@ -7957,13 +7968,13 @@ do
                 end
 
                 if AnimationType then
-                    -- These bundle item IDs are NOT directly playable AnimationClip IDs.
-                    -- Resolve the nested Animation.AnimationId and cache it.
+
+
                     local Ids = self:ResolveAnimationIds(Entry.Id, true)
                     AddResolved(AnimationType, Ids)
                 end
 
-                -- Never deserialize every asset in the same frame.
+
                 RunService.Heartbeat:Wait()
             end
 
@@ -8113,9 +8124,9 @@ do
             self.PreviewAnimation = nil
             self.PreviewCard = nil
 
-            -- Keep the preview avatar alive. Rebuilding the whole character every time
-            -- caused the blank ViewportFrame regression. The Animator is reset when the
-            -- next preview starts, which still prevents animation-state buildup.
+
+
+
             self.PreviewAnimator = nil
 
             if self.PreviewViewport and self.PreviewViewport.Parent then
@@ -8199,8 +8210,8 @@ do
             local Root = Model:FindFirstChild("HumanoidRootPart")
             local BoxCFrame, BoxSize = Model:GetBoundingBox()
 
-            -- Clamp pathological accessory/extents values so one odd accessory cannot
-            -- place the camera hundreds of studs away.
+
+
             local Height = math.clamp(BoxSize.Y, 4, 9)
             local Width = math.clamp(math.max(BoxSize.X, BoxSize.Z), 2, 7)
             local Center = Root and (Root.Position + Vector3.new(0, Height * 0.08, 0)) or BoxCFrame.Position
@@ -8733,11 +8744,11 @@ do
                 return true
             end
 
-            -- The small preview already paid the cost for one valid clip. Reuse it instantly.
+
             local Starter = BundleId and self.PreviewCache[BundleId]
             if Starter then AddPreview(Starter.Id, Starter.Type) end
 
-            -- Producer: resolve ONE wrapper at a time only after full view is open.
+
             task.spawn(function()
                 local Entries, EntryError = self:GetFullPreviewEntries(Result)
                 if not IsCurrent() then return end
@@ -8789,7 +8800,7 @@ do
                         self.FullPreviewStatus.Text = string.format("%s • resolving %d/%d", CurrentName, ResolvedEntries, Total)
                     end
 
-                    -- Give rendering/input time between expensive wrapper deserializations.
+
                     RunService.Heartbeat:Wait()
                     RunService.Heartbeat:Wait()
                     task.wait(0.05)
@@ -8809,7 +8820,7 @@ do
                 end
             end)
 
-            -- Consumer: never waits for the producer to finish the whole pack.
+
             task.spawn(function()
                 local Cached = BundleId and self.FullPreviewSequenceCache[BundleId]
                 if type(Cached) == "table" then
@@ -8896,8 +8907,8 @@ do
             elseif self.FullPreviewOverlay and self.FullPreviewOverlay.Parent then
                 self.FullPreviewOverlay.Visible = false
 
-                -- Keep the rendered avatar/world intact. A fresh Animator is created
-                -- on the next open, so tracks cannot accumulate across sessions.
+
+
                 self.FullPreviewAnimator = nil
             end
         end
@@ -9888,15 +9899,15 @@ do
                 return ResolvedId ~= nil
             end
 
-            -- Executor-friendly path first.
+
             TryGetObjects("rbxassetid://" .. CatalogId)
 
             if not ResolvedId then
                 TryGetObjects("https://www.roblox.com/asset/?id=" .. CatalogId)
             end
 
-            -- Roblox emotes are commonly model/wrapper assets containing an Animation.
-            -- InsertService is a fallback because some executors expose LoadAsset client-side.
+
+
             if not ResolvedId and InsertService then
                 local Success, Model = pcall(InsertService.LoadAsset, InsertService, tonumber(CatalogId))
 
@@ -11273,6 +11284,339 @@ function Library:SetGradientAnimation(State: boolean)
         end
     end
 end
+
+
+local function IsValidDiscordInvite(URL)
+    if typeof(URL) ~= "string" then return false end
+    URL = URL:match("^%s*(.-)%s*$")
+    return URL:match("^https://discord%.gg/[%w_%-]+/?$") ~= nil
+        or URL:match("^https://discord%.com/invite/[%w_%-]+/?$") ~= nil
+        or URL:match("^https://discordapp%.com/invite/[%w_%-]+/?$") ~= nil
+end
+
+function Library:SetDiscordInvite(URL: string)
+    assert(typeof(URL) == "string", "Discord invite must be a string")
+    self.DiscordInviteURL = URL:match("^%s*(.-)%s*$")
+    return IsValidDiscordInvite(self.DiscordInviteURL)
+end
+
+function Library:IsDiscordPopupSuppressed()
+    if getgenv().ZeroPointDiscordPopupSuppressedV2 == true then return true end
+    if typeof(isfile) == "function" and typeof(readfile) == "function" then
+        local Success, IsHidden = pcall(function()
+            return isfile(self.DiscordPopupStateFile)
+                and readfile(self.DiscordPopupStateFile) == "1"
+        end)
+        if Success and IsHidden then return true end
+    end
+    return false
+end
+
+function Library:SetDiscordPopupSuppressed(Value: boolean)
+    getgenv().ZeroPointDiscordPopupSuppressedV2 = Value == true
+    if typeof(writefile) ~= "function" then return end
+    pcall(function()
+        if typeof(isfolder) == "function" and typeof(makefolder) == "function" then
+            local Folder = self.DiscordPopupStateFile:match("^(.*)/[^/]+$")
+            if Folder and Folder ~= "" then
+                local Path = ""
+                for Segment in Folder:gmatch("[^/]+") do
+                    Path = Path == "" and Segment or (Path .. "/" .. Segment)
+                    if not isfolder(Path) then makefolder(Path) end
+                end
+            end
+        end
+        writefile(self.DiscordPopupStateFile, Value and "1" or "0")
+    end)
+end
+
+function Library:ShowDiscordPopup(Manual: boolean?)
+    if self.Unloaded or not (ScreenGui and ScreenGui.Parent) then return nil end
+    if self.DiscordPopup and self.DiscordPopup.Overlay and self.DiscordPopup.Overlay.Parent then
+        return self.DiscordPopup
+    end
+    if Manual ~= true then
+        if not self.DiscordPopupEnabled or self.DiscordPopupShown or self:IsDiscordPopupSuppressed() then
+            return nil
+        end
+    end
+    local PopupGui = New("ScreenGui", {
+        Name = "ZeroPointDiscordPopupGui",
+        DisplayOrder = math.min(ScreenGui.DisplayOrder + 1, 2147483647),
+        IgnoreGuiInset = true,
+        ResetOnSpawn = false,
+        Enabled = true,
+        ZIndexBehavior = Enum.ZIndexBehavior.Global,
+        Parent = ScreenGui.Parent,
+    })
+
+    local Blurple = Color3.fromRGB(88, 101, 242)
+    local CardWidth, CardHeight = 420, 384
+    local Overlay = New("TextButton", {
+        Name = "ZeroPointDiscordInviteOverlay",
+        AutoButtonColor = false,
+        BackgroundColor3 = Color3.fromRGB(0, 0, 0),
+        BackgroundTransparency = 1,
+        BorderSizePixel = 0,
+        Size = UDim2.fromScale(1, 1),
+        Text = "",
+        ZIndex = 20000,
+        Parent = PopupGui,
+    })
+    local Card = New("Frame", {
+        Name = "DiscordInvitation",
+        AnchorPoint = Vector2.new(0.5, 0.5),
+        BackgroundColor3 = "BackgroundColor",
+        Position = UDim2.fromScale(0.5, 0.5),
+        Size = UDim2.fromOffset(CardWidth, CardHeight),
+        ZIndex = 20001,
+        Parent = Overlay,
+    })
+    New("UICorner", { CornerRadius = UDim.new(0, 16), Parent = Card })
+    New("UIStroke", {
+        Color = "OutlineColor", Thickness = 1.5, Transparency = 0.05, Parent = Card,
+    })
+    local Scale = New("UIScale", { Scale = 0.93, Parent = Card })
+    local function GetBestScale()
+        local Camera = workspace.CurrentCamera
+        local V = Camera and Camera.ViewportSize or Vector2.new(800, 600)
+        return math.clamp(math.min((V.X - 28) / CardWidth, (V.Y - 28) / CardHeight), 0.35, 1)
+    end
+    local TargetScale = GetBestScale()
+    Scale.Scale = TargetScale * 0.92
+
+    local Header = New("Frame", {
+        BackgroundColor3 = "MainColor",
+        Size = UDim2.new(1, 0, 0, 124),
+        ZIndex = 20002,
+        Parent = Card,
+    })
+    New("UICorner", { CornerRadius = UDim.new(0, 16), Parent = Header })
+    New("Frame", {
+        BackgroundColor3 = "MainColor", BorderSizePixel = 0,
+        Position = UDim2.new(0, 0, 1, -17), Size = UDim2.new(1, 0, 0, 17),
+        ZIndex = 20003, Parent = Header,
+    })
+    New("Frame", {
+        BackgroundColor3 = "AccentColor", BorderSizePixel = 0,
+        Position = UDim2.fromOffset(0, 123), Size = UDim2.new(1, 0, 0, 2),
+        ZIndex = 20004, Parent = Card,
+    })
+    local IconTile = New("Frame", {
+        BackgroundColor3 = Blurple, Position = UDim2.fromOffset(23, 25),
+        Size = UDim2.fromOffset(76, 76), ZIndex = 20004, Parent = Header,
+    })
+    New("UICorner", { CornerRadius = UDim.new(0, 19), Parent = IconTile })
+    local Logo = New("ImageLabel", {
+        Name = "DiscordLogo",
+        Image = self.DiscordLogoImage,
+        ImageColor3 = Color3.new(1, 1, 1),
+        BackgroundTransparency = 1,
+        Position = UDim2.fromOffset(13, 13),
+        Size = UDim2.fromOffset(50, 50),
+        ScaleType = Enum.ScaleType.Fit,
+        ZIndex = 20005,
+        Parent = IconTile,
+    })
+
+    local LogoFallback = New("TextLabel", {
+        BackgroundTransparency = 1, Text = "D", TextSize = 38,
+        Font = Enum.Font.GothamBlack,
+        TextColor3 = Color3.new(1, 1, 1),
+        Size = UDim2.fromScale(1, 1), Visible = false,
+        ZIndex = 20004, Parent = IconTile,
+    })
+    if self.DiscordLogoImage == "" then
+        Logo.Visible = false
+        LogoFallback.Visible = true
+    else
+        LogoFallback.Visible = not Logo.IsLoaded
+        Logo:GetPropertyChangedSignal("IsLoaded"):Connect(function()
+            if not Overlay.Parent then return end
+            LogoFallback.Visible = not Logo.IsLoaded
+        end)
+    end
+    New("TextLabel", {
+        BackgroundTransparency = 1, Text = "ZEROPOINT  /  COMMUNITY",
+        TextColor3 = "AccentColor", TextSize = 12,
+        TextXAlignment = Enum.TextXAlignment.Left,
+        Position = UDim2.fromOffset(116, 30), Size = UDim2.fromOffset(268, 20),
+        ZIndex = 20004, Parent = Header,
+    })
+    New("TextLabel", {
+        BackgroundTransparency = 1, Text = "Discord Server",
+        TextColor3 = "FontColor", TextSize = 23,
+        TextXAlignment = Enum.TextXAlignment.Left,
+        Position = UDim2.fromOffset(115, 52), Size = UDim2.fromOffset(280, 31),
+        ZIndex = 20004, Parent = Header,
+    })
+    New("TextLabel", {
+        BackgroundTransparency = 1, Text = "Connect with the community",
+        TextColor3 = "FontColor", TextTransparency = 0.32,
+        TextSize = 12, TextXAlignment = Enum.TextXAlignment.Left,
+        Position = UDim2.fromOffset(116, 88), Size = UDim2.fromOffset(280, 19),
+        ZIndex = 20004, Parent = Header,
+    })
+
+    New("TextLabel", {
+        BackgroundTransparency = 1, Text = "Want to join our Discord?",
+        TextColor3 = "FontColor", TextSize = 20,
+        TextXAlignment = Enum.TextXAlignment.Left,
+        Position = UDim2.fromOffset(24, 147), Size = UDim2.fromOffset(372, 28),
+        ZIndex = 20003, Parent = Card,
+    })
+    New("TextLabel", {
+        BackgroundTransparency = 1,
+        Text = "Meet other members, talk about features, and stay up to date with community news.",
+        TextColor3 = "FontColor", TextTransparency = 0.24,
+        TextSize = 14, TextWrapped = true,
+        TextXAlignment = Enum.TextXAlignment.Left,
+        TextYAlignment = Enum.TextYAlignment.Top,
+        Position = UDim2.fromOffset(24, 182), Size = UDim2.fromOffset(372, 50),
+        ZIndex = 20003, Parent = Card,
+    })
+    local InviteText = IsValidDiscordInvite(self.DiscordInviteURL)
+        and self.DiscordInviteURL or "Invite link not configured"
+    local InviteBox = New("TextBox", {
+        Name = "DiscordInviteLink", Text = InviteText,
+        BackgroundColor3 = "MainColor", ClearTextOnFocus = false,
+        TextSize = 13, TextXAlignment = Enum.TextXAlignment.Left,
+        Position = UDim2.fromOffset(24, 242), Size = UDim2.fromOffset(372, 38),
+        ZIndex = 20003, Parent = Card,
+    })
+    New("UICorner", { CornerRadius = UDim.new(0, 8), Parent = InviteBox })
+    New("UIStroke", { Color = "OutlineColor", Parent = InviteBox })
+    New("UIPadding", { PaddingLeft = UDim.new(0, 12), PaddingRight = UDim.new(0, 12), Parent = InviteBox })
+
+    local Later = New("TextButton", {
+        Name = "MaybeLater", Text = "Not now",
+        BackgroundColor3 = "MainColor", TextColor3 = "FontColor",
+        TextSize = 14, Position = UDim2.fromOffset(24, 294),
+        Size = UDim2.fromOffset(146, 43),
+        ZIndex = 20003, Parent = Card,
+    })
+    New("UICorner", { CornerRadius = UDim.new(0, 9), Parent = Later })
+    New("UIStroke", { Color = "OutlineColor", Parent = Later })
+    local Join = New("TextButton", {
+        Name = "JoinDiscord", Text = "Join Discord  >",
+        BackgroundColor3 = Blurple,
+        TextColor3 = Color3.new(1, 1, 1), TextSize = 15,
+        Position = UDim2.fromOffset(180, 294), Size = UDim2.fromOffset(216, 43),
+        ZIndex = 20003, Parent = Card,
+    })
+    New("UICorner", { CornerRadius = UDim.new(0, 9), Parent = Join })
+    local DontAsk = New("TextButton", {
+        Name = "DontAskAgain", Text = "",
+        BackgroundTransparency = 1, Position = UDim2.fromOffset(24, 349),
+        Size = UDim2.fromOffset(226, 24), ZIndex = 20003, Parent = Card,
+    })
+    local CheckSquare = New("Frame", {
+        BackgroundColor3 = "MainColor", Position = UDim2.fromOffset(0, 3),
+        Size = UDim2.fromOffset(17, 17), ZIndex = 20004, Parent = DontAsk,
+    })
+    New("UICorner", { CornerRadius = UDim.new(0, 4), Parent = CheckSquare })
+    New("UIStroke", { Color = "OutlineColor", Parent = CheckSquare })
+    local CheckMark = New("TextLabel", {
+        BackgroundTransparency = 1, Text = "✓", TextSize = 15,
+        TextColor3 = "AccentColor", Size = UDim2.fromScale(1, 1),
+        ZIndex = 20005, Parent = CheckSquare,
+    })
+    New("TextLabel", {
+        BackgroundTransparency = 1, Text = "Don't show this again",
+        TextColor3 = "FontColor", TextTransparency = 0.15, TextSize = 13,
+        TextXAlignment = Enum.TextXAlignment.Left,
+        Position = UDim2.fromOffset(26, 0), Size = UDim2.fromOffset(196, 24),
+        ZIndex = 20004, Parent = DontAsk,
+    })
+    local Status = New("TextLabel", {
+        BackgroundTransparency = 1, Text = "", Visible = false,
+        TextColor3 = "AccentColor", TextSize = 12, TextWrapped = true,
+        TextXAlignment = Enum.TextXAlignment.Right,
+        Position = UDim2.fromOffset(240, 346), Size = UDim2.fromOffset(156, 30),
+        ZIndex = 20004, Parent = Card,
+    })
+    local Exit = New("TextButton", {
+        Name = "CloseDiscordPopup", Text = "×", TextSize = 24,
+        BackgroundTransparency = 1, TextColor3 = "FontColor", TextTransparency = 0.34,
+        Position = UDim2.fromOffset(385, 6), Size = UDim2.fromOffset(28, 28),
+        ZIndex = 20006, Parent = Header,
+    })
+
+    local Prompt = { Overlay = Overlay, Card = Card }
+    local Closed = false
+    local ViewportConnection
+    function Prompt:Dismiss()
+        if Closed then return end
+        Closed = true
+        if ViewportConnection then ViewportConnection:Disconnect() end
+        if Library.DiscordPopup == self then Library.DiscordPopup = nil end
+        TweenService:Create(Overlay, TweenInfo.new(0.16), { BackgroundTransparency = 1 }):Play()
+        local Closing = TweenService:Create(Scale, TweenInfo.new(0.16), { Scale = TargetScale * 0.92 })
+        Closing:Play()
+        task.delay(0.18, function()
+            if PopupGui and PopupGui.Parent then PopupGui:Destroy() end
+        end)
+    end
+    self.DiscordPopup = Prompt
+
+    local Suppressed = self:IsDiscordPopupSuppressed()
+    CheckMark.Visible = Suppressed
+    DontAsk.MouseButton1Click:Connect(function()
+        Suppressed = not Suppressed
+        CheckMark.Visible = Suppressed
+        Library:SetDiscordPopupSuppressed(Suppressed)
+    end)
+    Later.MouseButton1Click:Connect(function() Prompt:Dismiss() end)
+    Exit.MouseButton1Click:Connect(function() Prompt:Dismiss() end)
+    Join.MouseButton1Click:Connect(function()
+        local URL = Library.DiscordInviteURL
+        if not IsValidDiscordInvite(URL) then
+            Status.Text = "Set DiscordInviteURL in the script first."
+            Status.Visible = true
+            InviteBox.Text = "Invite link not configured"
+            return
+        end
+        InviteBox.Text = URL
+        local Setter = setclipboard or toclipboard or (getgenv().setclipboard)
+        local Copied = false
+        if typeof(Setter) == "function" then
+            local Success = pcall(Setter, URL)
+            Copied = Success
+        end
+        if Copied then
+            Status.Text = "Link copied! Paste it in your browser."
+            Join.Text = "Copied!"
+            task.delay(1.8, function() Prompt:Dismiss() end)
+        else
+
+            InviteBox:CaptureFocus()
+            task.defer(function()
+                if not Closed and InviteBox.Parent then
+                    InviteBox.SelectionStart = 1
+                    InviteBox.CursorPosition = #URL + 1
+                end
+            end)
+            Status.Text = "Copy the link above to join."
+        end
+        Status.Visible = true
+    end)
+    Overlay.MouseButton1Click:Connect(function() Prompt:Dismiss() end)
+    local Camera = workspace.CurrentCamera
+    if Camera then
+        ViewportConnection = Camera:GetPropertyChangedSignal("ViewportSize"):Connect(function()
+            if Closed then return end
+            TargetScale = GetBestScale()
+            Scale.Scale = TargetScale
+        end)
+    end
+    TweenService:Create(Overlay, TweenInfo.new(0.2), { BackgroundTransparency = 0.37 }):Play()
+    TweenService:Create(Scale, TweenInfo.new(0.27, Enum.EasingStyle.Back, Enum.EasingDirection.Out), {
+        Scale = TargetScale,
+    }):Play()
+    self.DiscordPopupShown = true
+    return Prompt
+end
+
 function Library:CreateWindow(WindowInfo)
     WindowInfo = Library:Validate(WindowInfo, Templates.Window)
 
@@ -15074,6 +15418,19 @@ function Library:CreateWindow(WindowInfo)
             Library.Toggled = not Library.Toggled
         end
         MainFrame.Visible = Library.Toggled
+        if Library.Toggled and not Library.ActiveLoading and WindowInfo.ShowDiscordPrompt ~= false then
+            task.delay(0.35, function()
+                if Library.Toggled and not Library.Unloaded and not Library.ActiveLoading then
+                    local Success, ErrorMessage = pcall(Library.ShowDiscordPopup, Library, false)
+                    if not Success then
+                        Library.DiscordPopupShown = false
+                        warn("[ZeroPoint Discord] Failed to display popup: " .. tostring(ErrorMessage))
+                    end
+                end
+            end)
+        elseif not Library.Toggled and Library.DiscordPopup then
+            Library.DiscordPopup:Dismiss()
+        end
 
         local ScreenEffectTarget = EffectSystem.Targets.Screen
         local GuiEffectTarget = EffectSystem.Targets.Gui
@@ -15107,9 +15464,12 @@ function Library:CreateWindow(WindowInfo)
                     RestoreNativeCursor(false)
                     return
                 end
-                UserInputService.MouseIconEnabled = not Library.ShowCustomCursor
+                local DiscordPromptVisible = Library.DiscordPopup
+                    and Library.DiscordPopup.Overlay
+                    and Library.DiscordPopup.Overlay.Parent ~= nil
+                UserInputService.MouseIconEnabled = not Library.ShowCustomCursor or DiscordPromptVisible == true
                 Cursor.Position = UDim2.fromOffset(Mouse.X, Mouse.Y)
-                Cursor.Visible = Library.ShowCustomCursor
+                Cursor.Visible = Library.ShowCustomCursor and not DiscordPromptVisible
             end)
         elseif not Library.Toggled then
             RestoreNativeCursor(false)
@@ -15215,7 +15575,11 @@ function Library:CreateWindow(WindowInfo)
         Window:SetSidebarWidth(WindowInfo.SidebarCompactWidth)
     end
     if WindowInfo.AutoShow and not Library.ActiveLoading then
-        task.spawn(Library.Toggle)
+        task.defer(function()
+            if not Library.Unloaded and Library.Toggle then
+                Library:Toggle(true)
+            end
+        end)
     end
     if Library.IsMobile then
         local ToggleButton
@@ -16460,6 +16824,16 @@ function Library:LoadSettingsTab(Window, SettingsInfo)
     if Options.MenuKeybind then
         Library.ToggleKeybind = Options.MenuKeybind
     end
+
+    MenuGroup:AddButton("Discord Server", function()
+        Library:ShowDiscordPopup(true)
+    end)
+
+    MenuGroup:AddButton("Reset Discord Prompt", function()
+        Library:SetDiscordPopupSuppressed(false)
+        Library.DiscordPopupShown = false
+        Library:ShowDiscordPopup(true)
+    end)
 
     MenuGroup:AddButton("Unload", function()
         Library:Unload()
