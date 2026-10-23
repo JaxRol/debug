@@ -13066,29 +13066,30 @@ function Library:CreateWindow(WindowInfo)
                 AutomaticCanvasSize = Enum.AutomaticSize.X,
                 BackgroundTransparency = 1,
                 CanvasSize = UDim2.fromScale(0, 0),
-                Position = UDim2.fromOffset(2, 2),
+                Position = UDim2.fromOffset(2, Library.IsMobile and 1 or 2),
                 ScrollBarImageColor3 = "AccentColor",
-                ScrollBarImageTransparency = 0,
-                ScrollBarThickness = Library.IsMobile and 6 or 8,
+                ScrollBarImageTransparency = Library.IsMobile and 0.55 or 0,
+                ScrollBarThickness = Library.IsMobile and 2 or 8,
                 ScrollingDirection = Enum.ScrollingDirection.X,
-                Size = UDim2.new(1, -4, 0, Library.IsMobile and 32 or 48),
+                Size = UDim2.new(1, -4, 0, Library.IsMobile and 29 or 48),
                 Visible = false,
                 Parent = TabContainer,
             })
             New("UIListLayout", {
                 FillDirection = Enum.FillDirection.Horizontal,
-                Padding = UDim.new(0, 6),
-                VerticalAlignment = Enum.VerticalAlignment.Top,
+                Padding = UDim.new(0, Library.IsMobile and 3 or 6),
+                VerticalAlignment = Library.IsMobile and Enum.VerticalAlignment.Center or Enum.VerticalAlignment.Top,
                 Parent = SubPageBar,
             })
             New("UIPadding", {
-                PaddingTop = UDim.new(0, 3),
+                PaddingTop = UDim.new(0, Library.IsMobile and 2 or 3),
+                PaddingBottom = UDim.new(0, Library.IsMobile and 2 or 0),
                 PaddingLeft = UDim.new(0, 2),
                 PaddingRight = UDim.new(0, 2),
                 Parent = SubPageBar,
             })
             SubPageDivider = Library:MakeLine(TabContainer, {
-                Position = UDim2.fromOffset(0, Library.IsMobile and 36 or 52),
+                Position = UDim2.fromOffset(0, Library.IsMobile and 31 or 52),
                 Size = UDim2.new(1, 0, 0, 1),
             })
             SubPageDivider.Visible = false
@@ -13323,7 +13324,7 @@ function Library:CreateWindow(WindowInfo)
             local Button = New("TextButton", {
                 BackgroundColor3 = "AccentColor",
                 BackgroundTransparency = 1,
-                Size = UDim2.fromOffset(Library.IsMobile and 28 or 34, Library.IsMobile and 28 or 34),
+                Size = UDim2.fromOffset(Library.IsMobile and 25 or 34, Library.IsMobile and 25 or 34),
                 Text = "",
                 Visible = SubPage.Visible,
                 Parent = SubPageBar,
@@ -13344,7 +13345,7 @@ function Library:CreateWindow(WindowInfo)
                 ImageRectSize = PageIcon and PageIcon.ImageRectSize or Vector2.zero,
                 ImageTransparency = 0.5,
                 Position = UDim2.fromScale(0.5, 0.5),
-                Size = UDim2.fromOffset(18, 18),
+                Size = UDim2.fromOffset(Library.IsMobile and 14 or 18, Library.IsMobile and 14 or 18),
                 Visible = SubPage.ShowIcon,
                 Parent = Button,
             })
@@ -13354,7 +13355,7 @@ function Library:CreateWindow(WindowInfo)
                 Position = UDim2.fromScale(0.5, 0.5),
                 Size = UDim2.new(1, -20, 1, 0),
                 Text = SubPage.DisplayName,
-                TextSize = 14,
+                TextSize = Library.IsMobile and 11 or 14,
                 TextTransparency = 0.5,
                 TextTruncate = Enum.TextTruncate.AtEnd,
                 TextXAlignment = Enum.TextXAlignment.Center,
@@ -13375,35 +13376,54 @@ function Library:CreateWindow(WindowInfo)
             })
 
             local function UpdateSubPageButtonLayout()
-                ButtonIcon.Visible = SubPage.ShowIcon
+                local NarrowMobile = Library.IsMobile and SubPageBar.AbsoluteSize.X > 0 and SubPageBar.AbsoluteSize.X < 420
+                local ShowIcon = SubPage.ShowIcon and (not NarrowMobile or not SubPage.ShowName)
+                ButtonIcon.Visible = ShowIcon
                 ButtonLabel.Visible = SubPage.ShowName
                 ButtonLabel.Text = SubPage.DisplayName or SubPage.Name
 
                 if SubPage.ShowName then
                     local TextWidth = Library:GetTextBounds(SubPage.DisplayName or SubPage.Name, Library.Scheme.Font, ButtonLabel.TextSize)
-                    local ButtonWidth = math.ceil(TextWidth) + 24
+                    local ButtonWidth = math.ceil(TextWidth) + (Library.IsMobile and 14 or 24)
 
-                    if SubPage.ShowIcon then
-                        ButtonWidth += 26
-                        ButtonIcon.AnchorPoint = Vector2.new(0, 0.5)
-                        ButtonIcon.Position = UDim2.new(0, 12, 0.5, 0)
-                        ButtonLabel.AnchorPoint = Vector2.new(0, 0.5)
-                        ButtonLabel.Position = UDim2.new(0, 38, 0.5, 0)
-                        ButtonLabel.Size = UDim2.new(1, -50, 1, 0)
+                    if ShowIcon then
+                        if Library.IsMobile then
+                            ButtonWidth += 19
+                            ButtonIcon.AnchorPoint = Vector2.new(0, 0.5)
+                            ButtonIcon.Position = UDim2.new(0, 6, 0.5, 0)
+                            ButtonLabel.AnchorPoint = Vector2.new(0, 0.5)
+                            ButtonLabel.Position = UDim2.new(0, 25, 0.5, 0)
+                            ButtonLabel.Size = UDim2.new(1, -31, 1, 0)
+                        else
+                            ButtonWidth += 26
+                            ButtonIcon.AnchorPoint = Vector2.new(0, 0.5)
+                            ButtonIcon.Position = UDim2.new(0, 12, 0.5, 0)
+                            ButtonLabel.AnchorPoint = Vector2.new(0, 0.5)
+                            ButtonLabel.Position = UDim2.new(0, 38, 0.5, 0)
+                            ButtonLabel.Size = UDim2.new(1, -50, 1, 0)
+                        end
                         ButtonLabel.TextXAlignment = Enum.TextXAlignment.Left
                     else
                         ButtonLabel.AnchorPoint = Vector2.new(0.5, 0.5)
                         ButtonLabel.Position = UDim2.fromScale(0.5, 0.5)
-                        ButtonLabel.Size = UDim2.new(1, -20, 1, 0)
+                        ButtonLabel.Size = UDim2.new(1, Library.IsMobile and -10 or -20, 1, 0)
                         ButtonLabel.TextXAlignment = Enum.TextXAlignment.Center
                     end
 
-                    Button.Size = UDim2.fromOffset(math.max(ButtonWidth, 44), Library.IsMobile and 44 or 34)
+                    if Library.IsMobile then
+                        ButtonWidth = math.clamp(ButtonWidth, 34, 120)
+                    else
+                        ButtonWidth = math.max(ButtonWidth, 44)
+                    end
+                    Button.Size = UDim2.fromOffset(ButtonWidth, Library.IsMobile and 25 or 34)
                 else
-                    Button.Size = UDim2.fromOffset(Library.IsMobile and 44 or 34, Library.IsMobile and 44 or 34)
+                    Button.Size = UDim2.fromOffset(Library.IsMobile and 25 or 34, Library.IsMobile and 25 or 34)
                     ButtonIcon.AnchorPoint = Vector2.new(0.5, 0.5)
                     ButtonIcon.Position = UDim2.fromScale(0.5, 0.5)
                 end
+            end
+            if Library.IsMobile then
+                Library:GiveSignal(SubPageBar:GetPropertyChangedSignal("AbsoluteSize"):Connect(UpdateSubPageButtonLayout))
             end
 
             SubPage.Button = Button
@@ -13846,7 +13866,7 @@ function Library:CreateWindow(WindowInfo)
             end
         end
         function Tab:RefreshSides()
-            local SubPageOffset = SubPageBar.Visible and (Library.IsMobile and 39 or 56) or 0
+            local SubPageOffset = SubPageBar.Visible and (Library.IsMobile and 34 or 56) or 0
             local WarningOffset = WarningBoxHolder.Visible and WarningBox.Size.Y.Offset + 8 or 0
             local Offset = SubPageOffset + WarningOffset
 
