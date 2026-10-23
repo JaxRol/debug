@@ -287,6 +287,8 @@ local Library = {
     ToggleKeybind = Enum.KeyCode.RightControl,
     TweenInfo = TweenInfo.new(0.16, Enum.EasingStyle.Quad, Enum.EasingDirection.Out),
     NotifyTweenInfo = TweenInfo.new(0.25, Enum.EasingStyle.Quad, Enum.EasingDirection.Out),
+    ToggleTweenInfo = TweenInfo.new(0.20, Enum.EasingStyle.Quart, Enum.EasingDirection.Out),
+    ToggleAnimationsEnabled = true,
     Toggled = false,
     Unloaded = false,
     Labels = Labels,
@@ -495,6 +497,7 @@ local Templates = {
     Toggle = {
         Text = "Toggle",
         Default = false,
+        Animated = true,
         Callback = function() end,
         Changed = function() end,
         Risky = false,
@@ -682,6 +685,30 @@ local function StopTween(Tween: TweenBase)
         return
     end
     Tween:Cancel()
+end
+
+local function SetToggleVisual(Toggle, Key, Target, Properties, Animated)
+    local Existing = Toggle.VisualTweens[Key]
+    if Existing then
+        Toggle.VisualTweens[Key] = nil
+        Existing:Cancel()
+        Existing:Destroy()
+    end
+    if not Animated then
+        for Property, Value in Properties do
+            Target[Property] = Value
+        end
+        return
+    end
+    local Tween = TweenService:Create(Target, Library.ToggleTweenInfo, Properties)
+    Toggle.VisualTweens[Key] = Tween
+    Tween.Completed:Once(function()
+        if Toggle.VisualTweens[Key] == Tween then
+            Toggle.VisualTweens[Key] = nil
+        end
+        Tween:Destroy()
+    end)
+    Tween:Play()
 end
 local function Trim(Text: string)
     return Text:match("^%s*(.-)%s*$")
@@ -5169,6 +5196,8 @@ do
             Addons = {},
             Variant = "Checkbox",
             Type = "Toggle",
+            Animated = Info.Animated ~= false,
+            VisualTweens = {},
         }
         local Button = New("TextButton", {
             Active = not Toggle.Disabled,
@@ -5218,29 +5247,51 @@ do
             Size = UDim2.new(1, -4, 1, -4),
             Parent = Checkbox,
         })
+        local CheckScale = New("UIScale", {
+            Scale = Toggle.Value and 1 or 0.75,
+            Parent = CheckImage,
+        })
         function Toggle:UpdateColors()
-            Toggle:Display()
+            Toggle:Display(true)
         end
-        function Toggle:Display()
+        function Toggle:Display(ForceRefresh)
             if Library.Unloaded then
                 return
             end
-            CheckboxStroke.Transparency = Toggle.Disabled and 0.5 or 0
-            if Toggle.Disabled then
-                Label.TextTransparency = 0.8
-                CheckImage.ImageTransparency = Toggle.Value and 0.8 or 1
-                Checkbox.BackgroundColor3 = Library.Scheme.BackgroundColor
-                Library.Registry[Checkbox].BackgroundColor3 = "BackgroundColor"
+            if not ForceRefresh and Toggle.LastRenderedValue ~= nil
+                and Toggle.LastRenderedValue == Toggle.Value
+                and Toggle.LastRenderedDisabled == Toggle.Disabled then
                 return
             end
-            TweenService:Create(Label, Library.TweenInfo, {
-                TextTransparency = Toggle.Value and 0 or 0.4,
-            }):Play()
-            TweenService:Create(CheckImage, Library.TweenInfo, {
-                ImageTransparency = Toggle.Value and 0 or 1,
-            }):Play()
-            Checkbox.BackgroundColor3 = Library.Scheme.MainColor
-            Library.Registry[Checkbox].BackgroundColor3 = "MainColor"
+            local Animated = Toggle.LastRenderedValue ~= nil
+                and Toggle.LastRenderedValue ~= Toggle.Value
+                and not Toggle.Disabled
+                and Toggle.Animated
+                and Library.ToggleAnimationsEnabled
+            Toggle.LastRenderedValue = Toggle.Value
+            Toggle.LastRenderedDisabled = Toggle.Disabled
+            CheckboxStroke.Transparency = Toggle.Disabled and 0.5 or 0
+            local BackgroundScheme = Toggle.Disabled and "BackgroundColor"
+                or (Toggle.Value and "AccentColor" or "MainColor")
+            local StrokeScheme = Toggle.Value and "AccentColor" or "OutlineColor"
+            Library.Registry[Checkbox].BackgroundColor3 = BackgroundScheme
+            Library.Registry[CheckboxStroke].Color = StrokeScheme
+            SetToggleVisual(Toggle, "Fill", Checkbox, {
+                BackgroundColor3 = Library.Scheme[BackgroundScheme],
+            }, Animated)
+            SetToggleVisual(Toggle, "Outline", CheckboxStroke, {
+                Color = Library.Scheme[StrokeScheme],
+            }, Animated)
+            SetToggleVisual(Toggle, "Label", Label, {
+                TextTransparency = Toggle.Disabled and 0.8 or (Toggle.Value and 0 or 0.4),
+            }, Animated)
+            SetToggleVisual(Toggle, "Check", CheckImage, {
+                ImageTransparency = Toggle.Disabled and (Toggle.Value and 0.8 or 1)
+                    or (Toggle.Value and 0 or 1),
+            }, Animated)
+            SetToggleVisual(Toggle, "CheckScale", CheckScale, {
+                Scale = Toggle.Value and 1 or 0.75,
+            }, Animated)
         end
         function Toggle:OnChanged(Func)
             Toggle.Changed = Func
@@ -5356,6 +5407,8 @@ do
             Addons = {},
             Variant = "Switch",
             Type = "Toggle",
+            Animated = Info.Animated ~= false,
+            VisualTweens = {},
         }
         local Button = New("TextButton", {
             Active = not Toggle.Disabled,
@@ -5414,38 +5467,49 @@ do
             Parent = Ball,
         })
         function Toggle:UpdateColors()
-            Toggle:Display()
+            Toggle:Display(true)
         end
-        function Toggle:Display()
+        function Toggle:Display(ForceRefresh)
             if Library.Unloaded then
                 return
             end
-            local Offset = Toggle.Value and 1 or 0
-            Switch.BackgroundTransparency = Toggle.Disabled and 0.75 or 0
-            SwitchStroke.Transparency = Toggle.Disabled and 0.75 or 0
-            Switch.BackgroundColor3 = Toggle.Value and Library.Scheme.AccentColor or Library.Scheme.MainColor
-            SwitchStroke.Color = Toggle.Value and Library.Scheme.AccentColor or Library.Scheme.OutlineColor
-            Library.Registry[Switch].BackgroundColor3 = Toggle.Value and "AccentColor" or "MainColor"
-            Library.Registry[SwitchStroke].Color = Toggle.Value and "AccentColor" or "OutlineColor"
-            if Toggle.Disabled then
-                Label.TextTransparency = 0.8
-                Ball.AnchorPoint = Vector2.new(Offset, 0)
-                Ball.Position = UDim2.fromScale(Offset, 0)
-                Ball.BackgroundColor3 = Library:GetDarkerColor(Library.Scheme.FontColor)
-                Library.Registry[Ball].BackgroundColor3 = function()
-                    return Library:GetDarkerColor(Library.Scheme.FontColor)
-                end
+            if not ForceRefresh and Toggle.LastRenderedValue ~= nil
+                and Toggle.LastRenderedValue == Toggle.Value
+                and Toggle.LastRenderedDisabled == Toggle.Disabled then
                 return
             end
-            TweenService:Create(Label, Library.TweenInfo, {
-                TextTransparency = Toggle.Value and 0 or 0.14,
-            }):Play()
-            TweenService:Create(Ball, Library.TweenInfo, {
+            local Offset = Toggle.Value and 1 or 0
+            local Animated = Toggle.LastRenderedValue ~= nil
+                and Toggle.LastRenderedValue ~= Toggle.Value
+                and not Toggle.Disabled
+                and Toggle.Animated
+                and Library.ToggleAnimationsEnabled
+            Toggle.LastRenderedValue = Toggle.Value
+            Toggle.LastRenderedDisabled = Toggle.Disabled
+            local FillScheme = Toggle.Value and "AccentColor" or "MainColor"
+            local StrokeScheme = Toggle.Value and "AccentColor" or "OutlineColor"
+            Library.Registry[Switch].BackgroundColor3 = FillScheme
+            Library.Registry[SwitchStroke].Color = StrokeScheme
+            Library.Registry[Ball].BackgroundColor3 = Toggle.Disabled and function()
+                return Library:GetDarkerColor(Library.Scheme.FontColor)
+            end or "FontColor"
+            Switch.BackgroundTransparency = Toggle.Disabled and 0.75 or 0
+            SwitchStroke.Transparency = Toggle.Disabled and 0.75 or 0
+            SetToggleVisual(Toggle, "Fill", Switch, {
+                BackgroundColor3 = Library.Scheme[FillScheme],
+            }, Animated)
+            SetToggleVisual(Toggle, "Outline", SwitchStroke, {
+                Color = Library.Scheme[StrokeScheme],
+            }, Animated)
+            SetToggleVisual(Toggle, "Label", Label, {
+                TextTransparency = Toggle.Disabled and 0.8 or (Toggle.Value and 0 or 0.14),
+            }, Animated)
+            SetToggleVisual(Toggle, "Thumb", Ball, {
                 AnchorPoint = Vector2.new(Offset, 0),
                 Position = UDim2.fromScale(Offset, 0),
-            }):Play()
-            Ball.BackgroundColor3 = Library.Scheme.FontColor
-            Library.Registry[Ball].BackgroundColor3 = "FontColor"
+                BackgroundColor3 = Toggle.Disabled and Library:GetDarkerColor(Library.Scheme.FontColor)
+                    or Library.Scheme.FontColor,
+            }, Animated)
         end
         function Toggle:OnChanged(Func)
             Toggle.Changed = Func
