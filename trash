@@ -326,6 +326,7 @@ local Library = {
     CornerRadius = 10,
     CornerRadiusDropdown = false,
     UIDensity = "Comfortable",
+    MobileMenuSize = 80,
     DensityRows = {},
     DensityGroupboxes = {},
     IsLightTheme = false,
@@ -366,7 +367,7 @@ local Library = {
 if RunService:IsStudio() then
     if UserInputService.TouchEnabled and not UserInputService.MouseEnabled then
         Library.IsMobile = true
-        Library.OriginalMinSize = Vector2.new(480, 240)
+        Library.OriginalMinSize = Vector2.new(310, 205)
     else
         Library.IsMobile = false
         Library.OriginalMinSize = Vector2.new(480, 360)
@@ -377,7 +378,7 @@ else
     end)
     Library.IsMobile = (Library.DevicePlatform == Enum.Platform.Android or Library.DevicePlatform == Enum.Platform.IOS)
         or (UserInputService.TouchEnabled and not UserInputService.KeyboardEnabled)
-    Library.OriginalMinSize = Library.IsMobile and Vector2.new(480, 240) or Vector2.new(480, 360)
+    Library.OriginalMinSize = Library.IsMobile and Vector2.new(310, 205) or Vector2.new(480, 360)
 end
 local Templates = {
     Frame = {
@@ -11731,6 +11732,35 @@ function Library:ShowDiscordPopup(Manual: boolean?)
     return Prompt
 end
 
+function Library:GetMobileMenuDimensions(Viewport, PreferredSize)
+    local Scale = math.max(tonumber(self.DPIScale) or 1, 0.5)
+    local WidthLimit = math.max(1, math.floor((Viewport.X - 12) / Scale))
+    local HeightLimit = math.max(1, math.floor((Viewport.Y - 12) / Scale))
+    local Fraction = math.clamp((tonumber(self.MobileMenuSize) or 80) / 100, 0.7, 1)
+    local TargetWidth = math.floor(Viewport.X * Fraction / Scale)
+    local TargetHeight = math.floor(Viewport.Y * Fraction / Scale)
+    if Viewport.Y > Viewport.X then
+        TargetWidth = math.max(TargetWidth, math.min(310, WidthLimit))
+    end
+    TargetHeight = math.max(TargetHeight, math.min(205, HeightLimit))
+    return Vector2.new(
+        math.max(1, math.min(PreferredSize.X, WidthLimit, TargetWidth)),
+        math.max(1, math.min(PreferredSize.Y, HeightLimit, TargetHeight))
+    )
+end
+
+function Library:SetMobileMenuSize(Value)
+    local Percentage = tonumber(tostring(Value):gsub("%%", ""))
+    if not Percentage or Percentage < 70 or Percentage > 100 then
+        return false
+    end
+    self.MobileMenuSize = Percentage
+    if self.IsMobile and self.Window and self.Window.RefreshMobileLayout then
+        self.Window:RefreshMobileLayout(true)
+    end
+    return true
+end
+
 function Library:CreateWindow(WindowInfo)
     WindowInfo = Library:Validate(WindowInfo, Templates.Window)
 
@@ -11757,6 +11787,10 @@ function Library:CreateWindow(WindowInfo)
     end
 
     local MobilePreferredWindowSize = Vector2.new(WindowInfo.Size.X.Offset, WindowInfo.Size.Y.Offset)
+    if Library.IsMobile then
+        local InitialMobileSize = Library:GetMobileMenuDimensions(ViewportSize, MobilePreferredWindowSize)
+        WindowInfo.Size = UDim2.fromOffset(InitialMobileSize.X, InitialMobileSize.Y)
+    end
     local MaxX = math.max(1, ViewportSize.X - (Library.IsMobile and 12 or 64))
     local MaxY = math.max(1, ViewportSize.Y - (Library.IsMobile and 12 or 64))
     Library.OriginalMinSize =
@@ -12828,19 +12862,20 @@ function Library:CreateWindow(WindowInfo)
         LastResponsiveViewport = Viewport
         local CurrentWidth = MainFrame.Size.X.Offset
         local CurrentHeight = MainFrame.Size.Y.Offset
-        local NextWidth = ViewportChanged and MobilePreferredWindowSize.X or CurrentWidth
-        local NextHeight = ViewportChanged and MobilePreferredWindowSize.Y or CurrentHeight
-        NextWidth = math.min(NextWidth, AvailableWidth)
-        NextHeight = math.min(NextHeight, AvailableHeight)
+        local MobileTargetSize = Library:GetMobileMenuDimensions(Viewport, MobilePreferredWindowSize)
+        local NextWidth = ViewportChanged and MobileTargetSize.X or CurrentWidth
+        local NextHeight = ViewportChanged and MobileTargetSize.Y or CurrentHeight
         Library.MinSize = Vector2.new(
-            math.min(Library.OriginalMinSize.X * Scale, AvailableWidth),
-            math.min(Library.OriginalMinSize.Y * Scale, AvailableHeight)
+            math.min(Library.OriginalMinSize.X, AvailableWidth),
+            math.min(Library.OriginalMinSize.Y, AvailableHeight)
         )
+        NextWidth = math.clamp(NextWidth, Library.MinSize.X, AvailableWidth)
+        NextHeight = math.clamp(NextHeight, Library.MinSize.Y, AvailableHeight)
         if NextWidth ~= CurrentWidth or NextHeight ~= CurrentHeight then
             MainFrame.Size = UDim2.fromOffset(NextWidth, NextHeight)
         end
         if ViewportChanged and WindowInfo.Center then
-            MainFrame.Position = UDim2.new(0.5, -NextWidth / 2, 0.5, -NextHeight / 2)
+            MainFrame.Position = UDim2.new(0.5, -(NextWidth * Scale) / 2, 0.5, -(NextHeight * Scale) / 2)
         end
         local MobileSidebarWidth = WindowInfo.SidebarCompactWidth
         if Window:GetSidebarWidth() ~= MobileSidebarWidth and
@@ -17175,6 +17210,17 @@ function Library:LoadSettingsTab(Window, SettingsInfo)
         end,
     })
 
+    MenuGroup:AddDropdown("UISettingsMobileMenuSize", {
+        Text = "Mobile Menu Size",
+        Values = { "70%", "80%", "90%", "100%" },
+        Default = tostring(Library.MobileMenuSize) .. "%",
+        Visible = Library.IsMobile,
+        Tooltip = "Adjusts how much of the mobile screen the menu occupies. Portrait mode preserves enough width for controls.",
+        Callback = function(Value)
+            Library:SetMobileMenuSize(Value)
+        end,
+    })
+
     MenuGroup:AddDropdown("UISettingsDPIScale", {
         Text = "DPI Scale",
         Values = { "50%", "75%", "100%", "125%", "150%", "175%", "200%" },
@@ -17253,7 +17299,15 @@ function Library:LoadSettingsTab(Window, SettingsInfo)
     end)
 
     MenuGroup:AddButton("Reset Interface Layout", function()
-        Window:SetCompact(false)
+        if Library.IsMobile then
+            Window:SetCompact(true)
+            Library:SetMobileMenuSize(80)
+            if Options.UISettingsMobileMenuSize then
+                Options.UISettingsMobileMenuSize:SetValue("80%")
+            end
+        else
+            Window:SetCompact(false)
+        end
         Library:SetUIDensity("Comfortable")
         Library:SetDPIScale(100)
         if Options.UISettingsDensity then
