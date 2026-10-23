@@ -1571,6 +1571,7 @@ function Library:RegisterDensityRow(Frame, ComfortableHeight, CompactHeight)
     table.insert(self.DensityRows, Entry)
     local Height = self.UIDensity == "Compact" and CompactHeight or ComfortableHeight
     Frame.Size = UDim2.new(Frame.Size.X.Scale, Frame.Size.X.Offset, 0, Height)
+    return Entry
 end
 
 function Library:SetUIDensity(Density)
@@ -5555,7 +5556,7 @@ do
             Visible = Input.Visible,
             Parent = Container,
         })
-        Library:RegisterDensityRow(Holder, 58, 51)
+        Library:RegisterDensityRow(Holder, 58, 54)
         local Label = New("TextLabel", {
             BackgroundTransparency = 1,
             Size = UDim2.new(1, 0, 0, 18),
@@ -5993,7 +5994,7 @@ do
             Visible = Dropdown.Visible,
             Parent = Container,
         })
-        Library:RegisterDensityRow(Holder, Dropdown.Text and 58 or 32, Dropdown.Text and 51 or 32)
+        local DensityEntry = Library:RegisterDensityRow(Holder, Dropdown.Text and 58 or 32, Dropdown.Text and 54 or 32)
         local Label = New("TextLabel", {
             BackgroundTransparency = 1,
             Size = UDim2.new(1, 0, 0, 18),
@@ -6669,10 +6670,21 @@ do
             Groupbox:Resize()
         end
         function Dropdown:SetText(Text: string)
-            Dropdown.Text = Text
-            Holder.Size = UDim2.new(1, 0, 0, Text and 39 or 21)
-            Label.Text = Text and Text or ""
-            Label.Visible = not not Text
+            local HasLabel = typeof(Text) == "string" and Text ~= ""
+            Dropdown.Text = HasLabel and Text or nil
+            Label.Text = HasLabel and Text or ""
+            Label.Visible = HasLabel
+            local ComfortableHeight = HasLabel and 58 or 32
+            local CompactHeight = HasLabel and 54 or 32
+            DensityEntry.Comfortable = ComfortableHeight
+            DensityEntry.Compact = CompactHeight
+            local Height = Library.UIDensity == "Compact" and CompactHeight or ComfortableHeight
+            Holder.Size = UDim2.new(1, 0, 0, Height)
+            task.defer(function()
+                if Holder.Parent and not Library.Unloaded then
+                    Groupbox:Resize()
+                end
+            end)
         end
         local ToggleDropdown = function()
             if Dropdown.Disabled then
