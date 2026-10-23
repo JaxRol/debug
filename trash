@@ -376,6 +376,7 @@ else
         Library.DevicePlatform = UserInputService:GetPlatform()
     end)
     Library.IsMobile = (Library.DevicePlatform == Enum.Platform.Android or Library.DevicePlatform == Enum.Platform.IOS)
+        or (UserInputService.TouchEnabled and not UserInputService.KeyboardEnabled)
     Library.OriginalMinSize = Library.IsMobile and Vector2.new(480, 240) or Vector2.new(480, 360)
 end
 local Templates = {
@@ -1646,6 +1647,9 @@ function Library:SetDPIScale(DPIScale: number)
     end
     for _, Notification in Library.Notifications do
         Notification:Resize()
+    end
+    if Library.IsMobile and Library.Window and Library.Window.RefreshMobileLayout then
+        Library.Window:RefreshMobileLayout(true)
     end
 end
 function Library:GiveSignal(Connection: RBXScriptConnection | RBXScriptSignal)
@@ -4947,7 +4951,7 @@ do
             Size = UDim2.new(1, 0, 0, 34),
             Parent = Container,
         })
-        Library:RegisterDensityRow(Holder, 34, 26)
+        Library:RegisterDensityRow(Holder, Library.IsMobile and 44 or 34, Library.IsMobile and 44 or 26)
         New("UIListLayout", {
             FillDirection = Enum.FillDirection.Horizontal,
             HorizontalFlex = Enum.UIFlexAlignment.Fill,
@@ -5348,7 +5352,7 @@ do
             Visible = Toggle.Visible,
             Parent = Container,
         })
-        Library:RegisterDensityRow(Button, 34, 24)
+        Library:RegisterDensityRow(Button, Library.IsMobile and 44 or 34, Library.IsMobile and 44 or 24)
         local Label = New("TextLabel", {
             BackgroundTransparency = 1,
             Size = UDim2.new(1, -49, 1, 0),
@@ -5556,7 +5560,7 @@ do
             Visible = Input.Visible,
             Parent = Container,
         })
-        Library:RegisterDensityRow(Holder, 58, 54)
+        Library:RegisterDensityRow(Holder, Library.IsMobile and 66 or 58, Library.IsMobile and 66 or 54)
         local Label = New("TextLabel", {
             BackgroundTransparency = 1,
             Size = UDim2.new(1, 0, 0, 18),
@@ -5571,7 +5575,7 @@ do
             ClearTextOnFocus = not Input.Disabled and Input.ClearTextOnFocus,
             PlaceholderText = Input.Placeholder,
             Position = UDim2.fromScale(0, 1),
-            Size = UDim2.new(1, 0, 0, 32),
+            Size = UDim2.new(1, 0, 0, Library.IsMobile and 40 or 32),
             Text = Input.Value,
             TextEditable = not Input.Disabled,
             TextScaled = false,
@@ -5708,7 +5712,9 @@ do
             Visible = Slider.Visible,
             Parent = Container,
         })
-        Library:RegisterDensityRow(Holder, Info.Compact and 26 or 53, Info.Compact and 26 or 44)
+        Library:RegisterDensityRow(Holder,
+            Library.IsMobile and (Info.Compact and 44 or 66) or (Info.Compact and 26 or 53),
+            Library.IsMobile and (Info.Compact and 44 or 66) or (Info.Compact and 26 or 44))
         local SliderLabel
         if not Info.Compact then
             SliderLabel = New("TextLabel", {
@@ -5725,7 +5731,7 @@ do
             AnchorPoint = Vector2.new(0, 1),
             BackgroundColor3 = "BackgroundColor",
             Position = UDim2.fromScale(0, 1),
-            Size = UDim2.new(1, 0, 0, 25),
+            Size = UDim2.new(1, 0, 0, Library.IsMobile and 40 or 25),
             Text = "",
             ClipsDescendants = true,
             Parent = Holder,
@@ -5988,13 +5994,17 @@ do
             Visible = Info.Visible,
             Type = "Dropdown",
         }
+        local DropdownTallHeight = Library.IsMobile and 66 or 58
+        local DropdownShortHeight = Library.IsMobile and 40 or 32
         local Holder = New("Frame", {
             BackgroundTransparency = 1,
-            Size = UDim2.new(1, 0, 0, Dropdown.Text and 58 or 32),
+            Size = UDim2.new(1, 0, 0, Dropdown.Text and DropdownTallHeight or DropdownShortHeight),
             Visible = Dropdown.Visible,
             Parent = Container,
         })
-        local DensityEntry = Library:RegisterDensityRow(Holder, Dropdown.Text and 58 or 32, Dropdown.Text and 54 or 32)
+        local DensityEntry = Library:RegisterDensityRow(Holder,
+            Dropdown.Text and DropdownTallHeight or DropdownShortHeight,
+            Dropdown.Text and (Library.IsMobile and DropdownTallHeight or 54) or DropdownShortHeight)
         local Label = New("TextLabel", {
             BackgroundTransparency = 1,
             Size = UDim2.new(1, 0, 0, 18),
@@ -6009,7 +6019,7 @@ do
             AnchorPoint = Vector2.new(0, 1),
             BackgroundColor3 = "BackgroundColor",
             Position = UDim2.fromScale(0, 1),
-            Size = UDim2.new(1, 0, 0, 32),
+            Size = UDim2.new(1, 0, 0, DropdownShortHeight),
             Text = "",
             TextTransparency = 1,
             ZIndex = 2,
@@ -6046,7 +6056,7 @@ do
         local DisplayButton = New("TextButton", {
             Active = not Dropdown.Disabled,
             BackgroundTransparency = 1,
-            Size = UDim2.new(1, 0, 0, 32),
+            Size = UDim2.new(1, 0, 0, DropdownShortHeight),
             Text = "---",
             TextSize = 14,
             TextXAlignment = Enum.TextXAlignment.Left,
@@ -6126,7 +6136,7 @@ do
        	function Dropdown:RecalculateListSize(Count)
 			local ItemCount =
 				Count or GetTableSize(Dropdown.Values)
-            local ItemHeight = (Dropdown.SpecialType == "Player" and Dropdown.EnablePlayerImages) and 46 or 27
+            local ItemHeight = (Dropdown.SpecialType == "Player" and Dropdown.EnablePlayerImages) and 46 or (Library.IsMobile and 40 or 27)
 
 			local ItemsHeight = math.clamp(
 				ItemCount * ItemHeight,
@@ -6137,6 +6147,11 @@ do
 
 			local MultiButtonHeight = Info.Multi and 29 or 0
 			local Y = ItemsHeight + MultiButtonHeight
+            if Library.IsMobile then
+                local Camera = workspace.CurrentCamera
+                local ViewportHeight = Camera and Camera.ViewportSize.Y or 480
+                Y = math.min(Y, math.max(100, (ViewportHeight - 30) / math.max(Library.DPIScale, 0.5)))
+            end
 
 			MenuTable:SetSize(function()
 				return UDim2.fromOffset(
@@ -6408,7 +6423,7 @@ do
                 local Table = {}
                 local ValueImage = GetValueImage(Value)
                 local RichPlayerRow = IsPlayerValue(Value) and Dropdown.EnablePlayerImages == true
-                local RowHeight = RichPlayerRow and 46 or 27
+                local RowHeight = RichPlayerRow and 46 or (Library.IsMobile and 40 or 27)
                 local Container = New("Frame", {
                     BackgroundColor3 = "MainColor",
                     BackgroundTransparency = 1,
@@ -6440,7 +6455,7 @@ do
                 end
                 local Button = New("TextButton", {
                     BackgroundTransparency = 1,
-                    Size = RichPlayerRow and UDim2.fromScale(1, 1) or ValueImage and UDim2.new(1, -18, 0, 27) or UDim2.new(1, 0, 0, 27),
+                    Size = RichPlayerRow and UDim2.fromScale(1, 1) or ValueImage and UDim2.new(1, -18, 0, RowHeight) or UDim2.new(1, 0, 0, RowHeight),
                     Position = RichPlayerRow and UDim2.fromOffset(0, 0) or ValueImage and UDim2.fromOffset(18, 0) or UDim2.fromOffset(0, 0),
                     Text = RichPlayerRow and "" or FormattedValue,
                     TextSize = 14,
@@ -6674,8 +6689,8 @@ do
             Dropdown.Text = HasLabel and Text or nil
             Label.Text = HasLabel and Text or ""
             Label.Visible = HasLabel
-            local ComfortableHeight = HasLabel and 58 or 32
-            local CompactHeight = HasLabel and 54 or 32
+            local ComfortableHeight = HasLabel and DropdownTallHeight or DropdownShortHeight
+            local CompactHeight = HasLabel and (Library.IsMobile and DropdownTallHeight or 54) or DropdownShortHeight
             DensityEntry.Comfortable = ComfortableHeight
             DensityEntry.Compact = CompactHeight
             local Height = Library.UIDensity == "Compact" and CompactHeight or ComfortableHeight
@@ -11741,8 +11756,9 @@ function Library:CreateWindow(WindowInfo)
         ViewportSize = Vector2.new(800, 600)
     end
 
-    local MaxX = ViewportSize.X - 64
-    local MaxY = ViewportSize.Y - 64
+    local MobilePreferredWindowSize = Vector2.new(WindowInfo.Size.X.Offset, WindowInfo.Size.Y.Offset)
+    local MaxX = math.max(1, ViewportSize.X - (Library.IsMobile and 12 or 64))
+    local MaxY = math.max(1, ViewportSize.Y - (Library.IsMobile and 12 or 64))
     Library.OriginalMinSize =
         Vector2.new(math.min(Library.OriginalMinSize.X, MaxX), math.min(Library.OriginalMinSize.Y, MaxY))
     Library.MinSize = Library.OriginalMinSize
@@ -12497,8 +12513,8 @@ function Library:CreateWindow(WindowInfo)
             AnchorPoint = Vector2.new(1, 0.5),
             BackgroundColor3 = "MainColor",
             BackgroundTransparency = 0.1,
-            Position = UDim2.new(1, -29, 0, 26),
-            Size = UDim2.fromOffset(29, 29),
+            Position = UDim2.new(1, Library.IsMobile and -33 or -29, 0, 26),
+            Size = UDim2.fromOffset(Library.IsMobile and 38 or 29, Library.IsMobile and 38 or 29),
             FontFace = Font.fromEnum(Enum.Font.GothamBold),
             Text = "⚙",
             TextSize = 18,
@@ -12758,10 +12774,24 @@ function Library:CreateWindow(WindowInfo)
         if not IsCompact then
             LastExpandedWidth = Width
         end
+        if Library.IsMobile then
+            task.defer(function()
+                if Window.RefreshMobileLayout and not Library.Unloaded then
+                    Window:RefreshMobileLayout()
+                end
+            end)
+        end
     end
     function Window:ShowTabInfo(Name, Description)
         CurrentTabLabel.Text = tostring(Name or "Overview")
         CurrentTabDescription.Text = Description or "Description"
+        if Library.IsMobile then
+            CurrentTabInfo.Visible = false
+            if IsDefaultSearchbarSize then
+                SearchBox.Size = UDim2.fromScale(1, 1)
+            end
+            return
+        end
         if IsDefaultSearchbarSize then
             SearchBox.Size = UDim2.fromScale(0.35, 1)
         end
@@ -12772,6 +12802,89 @@ function Library:CreateWindow(WindowInfo)
         if IsDefaultSearchbarSize then
             SearchBox.Size = UDim2.fromScale(1, 1)
         end
+    end
+    local ResponsiveUpdatePending = false
+    local LastResponsiveViewport = Vector2.zero
+    local ResponsiveViewportConnection
+    local function RefreshMobileLayout()
+        if not Library.IsMobile or Library.Unloaded or not MainFrame or not MainFrame.Parent then
+            return
+        end
+        local Camera = workspace.CurrentCamera
+        if not Camera then
+            return
+        end
+        local Viewport = ScreenGui and ScreenGui.AbsoluteSize or Vector2.zero
+        if Viewport.X <= 0 or Viewport.Y <= 0 then
+            Viewport = Camera.ViewportSize
+        end
+        if Viewport.X <= 0 or Viewport.Y <= 0 then
+            return
+        end
+        local Scale = math.max(Library.DPIScale, 0.5)
+        local AvailableWidth = math.max(1, math.floor((Viewport.X - 12) / Scale))
+        local AvailableHeight = math.max(1, math.floor((Viewport.Y - 12) / Scale))
+        local ViewportChanged = Viewport ~= LastResponsiveViewport
+        LastResponsiveViewport = Viewport
+        local CurrentWidth = MainFrame.Size.X.Offset
+        local CurrentHeight = MainFrame.Size.Y.Offset
+        local NextWidth = ViewportChanged and MobilePreferredWindowSize.X or CurrentWidth
+        local NextHeight = ViewportChanged and MobilePreferredWindowSize.Y or CurrentHeight
+        NextWidth = math.min(NextWidth, AvailableWidth)
+        NextHeight = math.min(NextHeight, AvailableHeight)
+        Library.MinSize = Vector2.new(
+            math.min(Library.OriginalMinSize.X * Scale, AvailableWidth),
+            math.min(Library.OriginalMinSize.Y * Scale, AvailableHeight)
+        )
+        if NextWidth ~= CurrentWidth or NextHeight ~= CurrentHeight then
+            MainFrame.Size = UDim2.fromOffset(NextWidth, NextHeight)
+        end
+        if ViewportChanged and WindowInfo.Center then
+            MainFrame.Position = UDim2.new(0.5, -NextWidth / 2, 0.5, -NextHeight / 2)
+        end
+        local MobileSidebarWidth = WindowInfo.SidebarCompactWidth
+        if Window:GetSidebarWidth() ~= MobileSidebarWidth and
+            (NextWidth < WindowInfo.MinContainerWidth + WindowInfo.MinSidebarWidth + 1) then
+            Window:SetSidebarWidth(MobileSidebarWidth)
+        end
+        local WidthAfterSidebar = NextWidth - Window:GetSidebarWidth() - 1
+        local UseSingleColumn = WidthAfterSidebar * Scale < 650
+        if ViewportChanged then
+            for _, Option in next, Options do
+                if Option.Type == "Dropdown" and typeof(Option.RecalculateListSize) == "function" then
+                    Option:RecalculateListSize()
+                end
+            end
+        end
+        for _, Tab in next, Library.Tabs do
+            if typeof(Tab) == "table" and typeof(Tab.SetSingleColumn) == "function" then
+                local Desired = UseSingleColumn or Tab.ManualSingleColumn == true
+                if Tab.SingleColumn ~= Desired then
+                    Tab:SetSingleColumn(Desired, true)
+                else
+                    Tab:RefreshSides()
+                end
+            end
+        end
+        if FeatureSearchPanel and SearchBox and FeatureSearchPanel.Visible then
+            FeatureSearchPanel.Size = UDim2.new(1, 0, 0, math.min(260, math.max(100, NextHeight - 65)))
+        end
+    end
+    local function QueueMobileLayout()
+        if not Library.IsMobile or ResponsiveUpdatePending then
+            return
+        end
+        ResponsiveUpdatePending = true
+        task.defer(function()
+            ResponsiveUpdatePending = false
+            RefreshMobileLayout()
+        end)
+    end
+    function Window:RefreshMobileLayout(ResetPreferredSize)
+        if ResetPreferredSize then
+            LastResponsiveViewport = Vector2.zero
+        end
+        QueueMobileLayout()
     end
     function Window:AddTab(...)
         local Name = nil
@@ -13054,6 +13167,8 @@ function Library:CreateWindow(WindowInfo)
             Tabboxes = {},
             DependencyGroupboxes = {},
             SingleColumn = false,
+            ManualSingleColumn = false,
+            ResponsiveElementOrder = 0,
             SubPages = {},
             SubPagesByName = {},
             ActiveSubPage = nil,
@@ -13126,7 +13241,7 @@ function Library:CreateWindow(WindowInfo)
             local Button = New("TextButton", {
                 BackgroundColor3 = "AccentColor",
                 BackgroundTransparency = 1,
-                Size = UDim2.fromOffset(34, 34),
+                Size = UDim2.fromOffset(Library.IsMobile and 44 or 34, Library.IsMobile and 44 or 34),
                 Text = "",
                 Visible = SubPage.Visible,
                 Parent = SubPageBar,
@@ -13201,9 +13316,9 @@ function Library:CreateWindow(WindowInfo)
                         ButtonLabel.TextXAlignment = Enum.TextXAlignment.Center
                     end
 
-                    Button.Size = UDim2.fromOffset(math.max(ButtonWidth, 44), 34)
+                    Button.Size = UDim2.fromOffset(math.max(ButtonWidth, 44), Library.IsMobile and 44 or 34)
                 else
-                    Button.Size = UDim2.fromOffset(34, 34)
+                    Button.Size = UDim2.fromOffset(Library.IsMobile and 44 or 34, Library.IsMobile and 44 or 34)
                     ButtonIcon.AnchorPoint = Vector2.new(0.5, 0.5)
                     ButtonIcon.Position = UDim2.fromScale(0.5, 0.5)
                 end
@@ -13675,8 +13790,18 @@ function Library:CreateWindow(WindowInfo)
             TabRight.Visible = true
         end
 
-        function Tab:SetSingleColumn(State)
-            Tab.SingleColumn = State == true
+        function Tab:SetSingleColumn(State, ResponsiveChange)
+            local NextState = State == true
+            if not ResponsiveChange then
+                Tab.ManualSingleColumn = NextState
+            end
+            if Tab.SingleColumn == NextState then
+                if Library.IsMobile and not ResponsiveChange then
+                    QueueMobileLayout()
+                end
+                return NextState
+            end
+            Tab.SingleColumn = NextState
 
             for _, Groupbox in Tab.Groupboxes do
                 if Groupbox and Groupbox.BoxHolder then
@@ -13703,6 +13828,9 @@ function Library:CreateWindow(WindowInfo)
             end
 
             Tab:RefreshSides()
+            if Library.IsMobile and not ResponsiveChange then
+                QueueMobileLayout()
+            end
             return Tab.SingleColumn
         end
         function Tab:Resize(ResizeWarningBox: boolean?)
@@ -13727,7 +13855,9 @@ function Library:CreateWindow(WindowInfo)
             Tab:RefreshSides()
         end
         function Tab:AddGroupbox(Info)
+            Tab.ResponsiveElementOrder += 1
             local BoxHolder = New("Frame", {
+                LayoutOrder = Tab.ResponsiveElementOrder,
                 AutomaticSize = Enum.AutomaticSize.Y,
                 BackgroundTransparency = 1,
                 Size = UDim2.fromScale(1, 0),
@@ -13902,7 +14032,9 @@ function Library:CreateWindow(WindowInfo)
             return Tab:AddGroupbox({ Side = 2, Name = Name, IconName = IconName })
         end
         function Tab:AddTabbox(Info)
+            Tab.ResponsiveElementOrder += 1
             local BoxHolder = New("Frame", {
+                LayoutOrder = Tab.ResponsiveElementOrder,
                 AutomaticSize = Enum.AutomaticSize.Y,
                 BackgroundTransparency = 1,
                 Size = UDim2.fromScale(1, 0),
@@ -14256,6 +14388,9 @@ function Library:CreateWindow(WindowInfo)
         end)
         TabButton.MouseButton1Click:Connect(Tab.Show)
         Library.Tabs[Name] = Tab
+        if Library.IsMobile then
+            QueueMobileLayout()
+        end
         return Tab
     end
     function Window:AddFullSizeTab(...)
@@ -15812,6 +15947,25 @@ function Library:CreateWindow(WindowInfo)
             end
         end))
     end
+    if Library.IsMobile then
+        Library:GiveSignal(MainFrame:GetPropertyChangedSignal("AbsoluteSize"):Connect(QueueMobileLayout))
+        Library:GiveSignal(ScreenGui:GetPropertyChangedSignal("AbsoluteSize"):Connect(QueueMobileLayout))
+        local function TrackMobileCamera()
+            if ResponsiveViewportConnection then
+                ResponsiveViewportConnection:Disconnect()
+                ResponsiveViewportConnection = nil
+            end
+            local Camera = workspace.CurrentCamera
+            if Camera then
+                ResponsiveViewportConnection = Library:GiveSignal(
+                    Camera:GetPropertyChangedSignal("ViewportSize"):Connect(QueueMobileLayout)
+                )
+            end
+            QueueMobileLayout()
+        end
+        Library:GiveSignal(workspace:GetPropertyChangedSignal("CurrentCamera"):Connect(TrackMobileCamera))
+        TrackMobileCamera()
+    end
     Library:SetScreenEffect(WindowInfo.ScreenEffect)
     Library:SetGuiEffect(WindowInfo.GuiEffect)
     Library:SetScreenEffectIntensity(WindowInfo.ScreenEffectIntensity)
@@ -15838,7 +15992,7 @@ function Library:CreateWindow(WindowInfo)
             local Btn = New("TextButton", {
                 BackgroundColor3 = "MainColor",
                 Position = UDim2.fromOffset(8, 8),
-                Size = UDim2.fromOffset(40, 40),
+                Size = UDim2.fromOffset(44, 44),
                 Text = "",
                 ZIndex = 10001,
                 Parent = ScreenGui,
@@ -15927,10 +16081,10 @@ function Library:CreateWindow(WindowInfo)
         if WindowInfo.MobileButtonsSide == "Right" then
             ToggleButton.Button.Position = UDim2.new(1, -8, 0, 8)
             ToggleButton.Button.AnchorPoint = Vector2.new(1, 0)
-            LockButton.Button.Position = UDim2.new(1, -8, 0, 52)
+            LockButton.Button.Position = UDim2.new(1, -8, 0, 60)
             LockButton.Button.AnchorPoint = Vector2.new(1, 0)
         else
-            LockButton.Button.Position = UDim2.fromOffset(8, 52)
+            LockButton.Button.Position = UDim2.fromOffset(8, 60)
         end
         if WindowInfo.ShowMobileButtons == false then
             ToggleButton.Button.Visible = false
