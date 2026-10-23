@@ -290,7 +290,7 @@ local Library = {
     ToggleTweenInfo = TweenInfo.new(0.20, Enum.EasingStyle.Quart, Enum.EasingDirection.Out),
     ToggleAnimationsEnabled = true,
     ButtonGlowEnabled = true,
-    ButtonGlowSize = 46,
+    ButtonGlowSize = 18,
     ButtonGlowHoverTweenInfo = TweenInfo.new(0.16, Enum.EasingStyle.Quad, Enum.EasingDirection.Out),
     ButtonGlowPulseTweenInfo = TweenInfo.new(0.11, Enum.EasingStyle.Quad, Enum.EasingDirection.Out),
     ButtonGlowFadeTweenInfo = TweenInfo.new(0.30, Enum.EasingStyle.Quad, Enum.EasingDirection.Out),
@@ -5026,7 +5026,7 @@ do
             if Library.ButtonGlowEnabled then
                 Base.ClipsDescendants = true
                 local GlowColor = Button.Risky and "RedColor" or "AccentColor"
-                local HaloSize = math.max(24, Library.ButtonGlowSize)
+                local HaloSize = math.clamp(tonumber(Library.ButtonGlowSize) or 18, 12, 22)
                 local GlowHalo = New("Frame", {
                     Name = "ButtonLightHalo",
                     Active = false,
@@ -5042,7 +5042,7 @@ do
                     CornerRadius = UDim.new(1, 0),
                     Parent = GlowHalo,
                 })
-                local CoreSize = math.max(8, math.floor(HaloSize * 0.32))
+                local CoreSize = math.max(6, math.floor(HaloSize * 0.4))
                 local GlowCore = New("Frame", {
                     Name = "ButtonLightCore",
                     Active = false,
@@ -5073,8 +5073,15 @@ do
                 end
                 local BasePosition = Button.Base.AbsolutePosition
                 local BaseSize = Button.Base.AbsoluteSize
-                local OffsetX = math.clamp(X - BasePosition.X, 0, BaseSize.X)
-                local OffsetY = math.clamp(Y - BasePosition.Y, 0, BaseSize.Y)
+                local TargetSize = math.clamp(tonumber(Library.ButtonGlowSize) or 18, 12, 22)
+                local HaloSize = math.min(TargetSize, math.max(8, BaseSize.Y - 4))
+                local CoreSize = math.max(5, math.floor(HaloSize * 0.4))
+                Button.GlowHalo.Size = UDim2.fromOffset(HaloSize, HaloSize)
+                Button.GlowCore.Size = UDim2.fromOffset(CoreSize, CoreSize)
+                local MarginX = math.min(HaloSize * 0.5 + 1, BaseSize.X * 0.5)
+                local MarginY = math.min(HaloSize * 0.5 + 1, BaseSize.Y * 0.5)
+                local OffsetX = math.clamp(X - BasePosition.X, MarginX, BaseSize.X - MarginX)
+                local OffsetY = math.clamp(Y - BasePosition.Y, MarginY, BaseSize.Y - MarginY)
                 local Position = UDim2.fromOffset(OffsetX, OffsetY)
                 Button.GlowHalo.Position = Position
                 Button.GlowCore.Position = Position
@@ -5112,10 +5119,10 @@ do
                 if not Button.GlowHalo then
                     return
                 end
-                if not Library.ButtonGlowEnabled or Button.Disabled or not Button.GlowHovered then
+                if Button.GlowHalo.BackgroundTransparency < 0.999
+                    or Button.GlowCore.BackgroundTransparency < 0.999
+                    or next(Button.GlowTweens) ~= nil then
                     SetLight(1, 1, Library.ButtonGlowFadeTweenInfo)
-                else
-                    SetLight(0.93, 0.83, Library.ButtonGlowHoverTweenInfo)
                 end
             end
             local function PulseLight()
@@ -5124,7 +5131,7 @@ do
                 end
                 Button.GlowPulseSerial += 1
                 local Serial = Button.GlowPulseSerial
-                SetLight(0.80, 0.54, Library.ButtonGlowPulseTweenInfo)
+                SetLight(0.76, 0.32, Library.ButtonGlowPulseTweenInfo)
                 task.delay(0.12, function()
                     if Library.Unloaded or not Button.Base.Parent or Button.GlowPulseSerial ~= Serial then
                         return
@@ -5141,19 +5148,9 @@ do
                     MoveLight(Input.Position.X, Input.Position.Y)
                 end
             end)
-            Button.Base.MouseMoved:Connect(function(X, Y)
-                if not Library.IsMobile and Button.GlowHovered then
-                    MoveLight(X, Y)
-                end
-            end)
             Button.Base.MouseEnter:Connect(function(X, Y)
                 if Button.Disabled then
                     return
-                end
-                if not Library.IsMobile then
-                    Button.GlowHovered = true
-                    MoveLight(X, Y)
-                    RefreshLight()
                 end
                 StopTween(Button.Tween)
                 Button.Tween = TweenService:Create(Button.Base, Library.TweenInfo, {
