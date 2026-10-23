@@ -11762,7 +11762,8 @@ function Library:GetMobileMenuDimensions(Viewport, PreferredSize)
 end
 
 function Library:SetMobileMenuSize(Value)
-    local Percentage = tonumber(tostring(Value):gsub("%%", ""))
+    local NormalizedValue = tostring(Value):gsub("%%", "")
+    local Percentage = tonumber(NormalizedValue)
     if not Percentage or Percentage < 70 or Percentage > 100 then
         return false
     end
