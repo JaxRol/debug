@@ -403,6 +403,7 @@ local GUIAppearanceDefaults = {
     Density = Library.IsMobile and "Compact" or "Comfortable",
     RowScale = 100,
     TextScale = 100,
+    ButtonTextHandling = "Auto Fit",
     CornerRadius = 10,
     WindowTransparency = 0,
     BackgroundImageOpacity = 75,
@@ -436,7 +437,7 @@ local GUIAppearanceRanges = {
 }
 local GUIAppearanceEnums = {
     WindowPosition = {"Center", "Custom"}, SidebarMode = {"Expanded", "Collapsed"},
-    Density = {"Comfortable", "Compact"}, MobileButtonsSide = {"Left", "Right"},
+    Density = {"Comfortable", "Compact"}, ButtonTextHandling = {"Auto Fit", "Wrap", "Ellipsis"}, MobileButtonsSide = {"Left", "Right"},
     Font = {"GothamMedium", "Gotham", "GothamBold", "GothamBlack", "SourceSans", "Arial", "Code"},
     NotificationSide = {"Left", "Right"},
 }
@@ -1799,6 +1800,64 @@ function Library:SetUIDensity(Density)
     return true
 end
 
+function Library:ConfigureButtonTextOverflow(Button)
+    if typeof(Button) ~= "table" or not Button.Base or not Button.Base.Parent then
+        return
+    end
+    local Mode = (self.GUIAppearance and self.GUIAppearance.ButtonTextHandling) or "Auto Fit"
+    local Base = Button.Base
+    Base.TextScaled = Mode == "Auto Fit"
+    Base.TextWrapped = Mode == "Wrap"
+    Base.TextTruncate = Enum.TextTruncate.AtEnd
+    if Mode == "Auto Fit" then
+        local Constraint = Button._TextOverflowConstraint
+        if not Constraint or not Constraint.Parent then
+            Constraint = Instance.new("UITextSizeConstraint")
+            Constraint.Name = "ButtonTextSizeLimit"
+            Constraint.Parent = Base
+            Button._TextOverflowConstraint = Constraint
+        end
+        Constraint.MinTextSize = 9
+        Constraint.MaxTextSize = math.max(10, math.floor((self.IsMobile and 12 or 14) * (self.GUITextScale or 1) + 0.5))
+    elseif Button._TextOverflowConstraint then
+        Button._TextOverflowConstraint:Destroy()
+        Button._TextOverflowConstraint = nil
+    end
+    if Button.UpdateOverflowTooltip then
+        task.defer(Button.UpdateOverflowTooltip)
+    end
+end
+function Library:UpdateButtonOverflowHeight(Button)
+    local Row = Button and Button._TextOverflowRow
+    if not Row then
+        return
+    end
+    local Mobile = self.IsMobile
+    local Normal = Mobile and 36 or 34
+    local Compact = Mobile and 24 or 26
+    if self.GUIAppearance and self.GUIAppearance.ButtonTextHandling == "Wrap" then
+        local TextSize = math.max(9, math.floor((Mobile and 12 or 14) * (self.GUITextScale or 1) + 0.5))
+        local MinimumHeight = TextSize * 2 + 12
+        local RowScale = math.max(0.1, self.RowHeightScale or 1)
+        Normal = math.max(Normal, math.ceil(MinimumHeight / RowScale))
+        Compact = math.max(Compact, math.ceil(MinimumHeight / RowScale))
+    end
+    Row.Comfortable = Normal
+    Row.Compact = Compact
+end
+function Library:RefreshButtonTextHandling()
+    for _, Button in pairs(self.Buttons) do
+        if typeof(Button) == "table" and Button.Base and Button.Base.Parent
+            and (Button.Type == "Button" or Button.Type == "SubButton") then
+            self:ConfigureButtonTextOverflow(Button)
+            if Button.Type == "Button" then
+                self:UpdateButtonOverflowHeight(Button)
+            end
+        end
+    end
+    self:SetUIDensity(self.UIDensity)
+end
+
 Library.ThemePresets = {
     Rose = { Color3.fromRGB(16, 17, 21), Color3.fromRGB(27, 29, 35), Color3.fromRGB(230, 74, 154), Color3.fromRGB(46, 49, 57) },
     Violet = { Color3.fromRGB(17, 17, 24), Color3.fromRGB(29, 28, 40), Color3.fromRGB(158, 124, 249), Color3.fromRGB(54, 51, 68) },
@@ -1871,6 +1930,7 @@ function Library:ApplyGUIAppearanceProperty(Key)
         if self.UpdateColorsUsingRegistry then self:UpdateColorsUsingRegistry() end
     elseif Key == "Font" then
         self:SetFont(Enum.Font[Value])
+        self:RefreshButtonTextHandling()
     elseif Key == "WindowWidth" or Key == "WindowHeight" then
         if Window and Window.SetWindowSize then
             Window:SetWindowSize(self.GUIAppearance.WindowWidth, self.GUIAppearance.WindowHeight)
@@ -1891,7 +1951,7 @@ function Library:ApplyGUIAppearanceProperty(Key)
         self:SetUIDensity(Value)
     elseif Key == "RowScale" then
         self.RowHeightScale = Value / 100
-        self:SetUIDensity(self.UIDensity)
+        self:RefreshButtonTextHandling()
     elseif Key == "TextScale" then
         self.GUITextScale = Value / 100
         for Index = #self.GUITextObjects, 1, -1 do
@@ -1902,6 +1962,9 @@ function Library:ApplyGUIAppearanceProperty(Key)
                 Entry.Object.TextSize = math.max(8, math.floor(Entry.Size * self.GUITextScale + 0.5))
             end
         end
+        self:RefreshButtonTextHandling()
+    elseif Key == "ButtonTextHandling" then
+        self:RefreshButtonTextHandling()
     elseif Key == "CornerRadius" then
         if Window then Window:SetCornerRadius(Value) else self.CornerRadius = Value end
     elseif Key == "WindowTransparency" then
@@ -1953,7 +2016,7 @@ function Library:ApplyGUIAppearance(Values)
     end
     local Order = {
         "BackgroundColor", "MainColor", "AccentColor", "OutlineColor", "FontColor", "Font",
-        "WindowWidth", "WindowHeight", "WindowPosition", "SidebarWidth", "SidebarMode", "UIScale", "Density", "RowScale", "TextScale",
+        "WindowWidth", "WindowHeight", "WindowPosition", "SidebarWidth", "SidebarMode", "UIScale", "Density", "RowScale", "TextScale", "ButtonTextHandling",
         "CornerRadius", "WindowTransparency", "BackgroundImageOpacity", "MobileSidebarWidth", "MobileButtonSize",
         "MobileButtonRoundness", "MobileButtonsSide", "MobileButtonsVisible", "MobileButtonsDraggable", "Glow", "Gradient",
         "ToggleAnimations", "ButtonGlow", "ButtonGlowSize", "AnimationDuration", "CustomCursor", "NotificationSide",
@@ -2255,6 +2318,9 @@ local function New(ClassName: string, Properties: { [string]: any }): any
     end
 
     FillInstance(Properties, Object)
+    if Object:IsA("TextButton") and Properties.TextTruncate == nil and not Object.TextWrapped then
+        Object.TextTruncate = Enum.TextTruncate.AtEnd
+    end
     if Object:IsA("TextLabel") or Object:IsA("TextButton") or Object:IsA("TextBox") then
         local OriginalSize = Object.TextSize
         if OriginalSize > 0 then
@@ -3781,7 +3847,12 @@ function Library:AddTooltip(InfoStr: string, DisabledInfoStr: string, HoverInsta
         TooltipTable.DisabledInfo = NewDisabledInfoStr
         if CurrentHoverInstance == HoverInstance and TooltipLabel then
             local SourceTooltip = TooltipTable.Disabled and TooltipTable.SourceDisabledInfo or TooltipTable.SourceInfo
-            TooltipLabel.Text = Library:TranslateText(SourceTooltip, HoverInstance)
+            if typeof(SourceTooltip) == "string" then
+                TooltipLabel.Text = Library:TranslateText(SourceTooltip, HoverInstance)
+            else
+                TooltipLabel.Visible = false
+                CurrentHoverInstance = nil
+            end
         end
     end
     function TooltipTable:Destroy()
@@ -5305,7 +5376,7 @@ do
             Size = UDim2.new(1, 0, 0, 34),
             Parent = Container,
         })
-        Library:RegisterDensityRow(Holder, Library.IsMobile and 36 or 34, Library.IsMobile and 24 or 26)
+        local ButtonRowEntry = Library:RegisterDensityRow(Holder, Library.IsMobile and 36 or 34, Library.IsMobile and 24 or 26)
         New("UIListLayout", {
             FillDirection = Enum.FillDirection.Horizontal,
             HorizontalFlex = Enum.UIFlexAlignment.Fill,
@@ -5456,6 +5527,29 @@ do
                     or Input.UserInputType == Enum.UserInputType.MouseButton1 then
                     MoveLight(Input.Position.X, Input.Position.Y)
                 end
+                if Input.UserInputType == Enum.UserInputType.Touch then
+                    Button._SuppressNextClick = false
+                    local Token = {}
+                    Button._TouchLabelToken = Token
+                    task.delay(0.65, function()
+                        if Library.Unloaded or Button._TouchLabelToken ~= Token
+                            or not Button.Base.Parent or Button.Base.TextFits
+                            or not Library:MouseIsOverFrame(Button.Base, Input.Position) then
+                            return
+                        end
+                        Button._SuppressNextClick = true
+                        Library:Notify({
+                            Title = "Full button label",
+                            Description = tostring(Button.Text),
+                            Time = 3,
+                        })
+                    end)
+                end
+            end)
+            Button.Base.InputEnded:Connect(function(Input)
+                if Input.UserInputType == Enum.UserInputType.Touch then
+                    Button._TouchLabelToken = nil
+                end
             end)
             Button.Base.MouseEnter:Connect(function(X, Y)
                 if Button.Disabled then
@@ -5483,6 +5577,10 @@ do
                 Button.Tween:Play()
             end)
             Button.Base.MouseButton1Click:Connect(function()
+                if Button._SuppressNextClick then
+                    Button._SuppressNextClick = false
+                    return
+                end
                 if Button.Disabled or Button.Locked then
                     return
                 end
@@ -5507,6 +5605,11 @@ do
             end)
         end
         Button.Base, Button.Stroke = CreateButton(Button)
+        Button._TextOverflowRow = ButtonRowEntry
+        Library:ConfigureButtonTextOverflow(Button)
+        Library:UpdateButtonOverflowHeight(Button)
+        local Height = Library.UIDensity == "Compact" and ButtonRowEntry.Compact or ButtonRowEntry.Comfortable
+        Holder.Size = UDim2.new(Holder.Size.X.Scale, Holder.Size.X.Offset, 0, math.max(16, math.floor(Height * Library.RowHeightScale + 0.5)))
         InitEvents(Button)
         function Button:AddButton(...)
             local Info = GetInfo(...)
@@ -5525,6 +5628,7 @@ do
             }
             Button.SubButton = SubButton
             SubButton.Base, SubButton.Stroke = CreateButton(SubButton)
+            Library:ConfigureButtonTextOverflow(SubButton)
             InitEvents(SubButton)
             function SubButton:UpdateColors()
                 if Library.Unloaded then
@@ -5557,19 +5661,30 @@ do
                 Groupbox:Resize()
             end
             function SubButton:SetText(Text: string)
-                SubButton.Text = Text
-                SubButton.Base.Text = Text
+                SubButton.Text = tostring(Text or "")
+                SubButton.Base.Text = SubButton.Text
+                if SubButton.UpdateOverflowTooltip then task.defer(SubButton.UpdateOverflowTooltip) end
             end
             if typeof(SubButton.Tooltip) == "string" or typeof(SubButton.DisabledTooltip) == "string" then
                 SubButton.TooltipTable =
                     Library:AddTooltip(SubButton.Tooltip, SubButton.DisabledTooltip, SubButton.Base)
                 SubButton.TooltipTable.Disabled = SubButton.Disabled
+            else
+                SubButton.TooltipTable = Library:AddTooltip(nil, nil, SubButton.Base)
+                SubButton.UpdateOverflowTooltip = function()
+                    if not SubButton.Base or not SubButton.Base.Parent then return end
+                    local Label = SubButton.Base.TextFits and nil or tostring(SubButton.Text)
+                    SubButton.TooltipTable:SetText(Label, Label)
+                end
+                Library:GiveSignal(SubButton.Base:GetPropertyChangedSignal("TextFits"):Connect(SubButton.UpdateOverflowTooltip))
+                task.defer(SubButton.UpdateOverflowTooltip)
             end
             if SubButton.Risky then
                 SubButton.Base.TextColor3 = Library.Scheme.RedColor
                 Library.Registry[SubButton.Base].TextColor3 = "RedColor"
             end
             SubButton:UpdateColors()
+            SubButton.Holder = Holder
             Library:BindDisabledState(SubButton, Info.Disabled)
             if Info.Idx then
                 Buttons[Info.Idx] = SubButton
@@ -5608,12 +5723,22 @@ do
             Groupbox:Resize()
         end
         function Button:SetText(Text: string)
-            Button.Text = Text
-            Button.Base.Text = Text
+            Button.Text = tostring(Text or "")
+            Button.Base.Text = Button.Text
+            if Button.UpdateOverflowTooltip then task.defer(Button.UpdateOverflowTooltip) end
         end
         if typeof(Button.Tooltip) == "string" or typeof(Button.DisabledTooltip) == "string" then
             Button.TooltipTable = Library:AddTooltip(Button.Tooltip, Button.DisabledTooltip, Button.Base)
             Button.TooltipTable.Disabled = Button.Disabled
+        else
+            Button.TooltipTable = Library:AddTooltip(nil, nil, Button.Base)
+            Button.UpdateOverflowTooltip = function()
+                if not Button.Base or not Button.Base.Parent then return end
+                local Label = Button.Base.TextFits and nil or tostring(Button.Text)
+                Button.TooltipTable:SetText(Label, Label)
+            end
+            Library:GiveSignal(Button.Base:GetPropertyChangedSignal("TextFits"):Connect(Button.UpdateOverflowTooltip))
+            task.defer(Button.UpdateOverflowTooltip)
         end
         if Button.Risky then
             Button.Base.TextColor3 = Library.Scheme.RedColor
@@ -12390,6 +12515,7 @@ function Library:CreateWindow(WindowInfo)
     local CurrentTabInfo
     local CurrentTabLabel
     local CurrentTabDescription
+    local RefreshHeaderLayout = function() end
     local ResizeButton
     local Tabs
     local Container
@@ -12561,6 +12687,7 @@ function Library:CreateWindow(WindowInfo)
         end
         TitleHolder = New("Frame", {
             BackgroundTransparency = 1,
+            ClipsDescendants = true,
             Size = UDim2.new(0, InitialLeftWidth, 1, 0),
             Parent = TopBar,
         })
@@ -12596,25 +12723,20 @@ function Library:CreateWindow(WindowInfo)
                 Parent = TitleHolder,
             })
         end
-        local X = Library:GetTextBounds(
-            WindowInfo.Title,
-            Font.fromEnum(Enum.Font.GothamBold),
-            18,
-            TitleHolder.AbsoluteSize.X - (WindowInfo.Icon and WindowInfo.IconSize.X.Offset + 6 or 0) - 12
-        )
         WindowTitle = New("TextLabel", {
             BackgroundTransparency = 1,
-            Size = UDim2.new(0, X, 1, 0),
+            Size = UDim2.new(1, -(WindowInfo.IconSize.X.Offset + 33), 1, 0),
             Text = WindowInfo.Title,
-            TextSize = Library.IsMobile and 14 or 18,
+            TextSize = Library.IsMobile and 14 or 16,
             FontFace = Font.fromEnum(Enum.Font.GothamBold),
+            TextTruncate = Enum.TextTruncate.AtEnd,
+            TextWrapped = false,
             TextXAlignment = Enum.TextXAlignment.Left,
             Parent = TitleHolder,
         })
         if Library.IsMobile then
             WindowIcon.Size = UDim2.fromOffset(24, 24)
-            WindowTitle.Size = UDim2.new(1, -56, 1, 0)
-            WindowTitle.TextTruncate = Enum.TextTruncate.AtEnd
+            WindowTitle.Size = UDim2.new(1, -57, 1, 0)
         end
         RightWrapper = New("Frame", {
             AnchorPoint = Vector2.new(1, 0.5),
@@ -12633,6 +12755,7 @@ function Library:CreateWindow(WindowInfo)
             Size = UDim2.fromScale(WindowInfo.DisableSearch and 1 or 0.65, 1),
             Visible = false,
             BackgroundTransparency = 1,
+            ClipsDescendants = true,
             Parent = RightWrapper,
         })
         New("UIListLayout", {
@@ -12663,7 +12786,7 @@ function Library:CreateWindow(WindowInfo)
             TextTruncate = Enum.TextTruncate.AtEnd,
             Size = UDim2.new(1, 0, 0, 18),
             Text = "",
-            TextWrapped = true,
+            TextWrapped = false,
             TextSize = 11,
             TextTruncate = Enum.TextTruncate.AtEnd,
             TextXAlignment = Enum.TextXAlignment.Left,
@@ -13036,6 +13159,12 @@ function Library:CreateWindow(WindowInfo)
                 end
                 local Width = math.floor(MainFrame.Size.X.Offset + 0.5)
                 local Height = math.floor(MainFrame.Size.Y.Offset + 0.5)
+                local SidebarLimit = math.max(WindowInfo.SidebarCompactWidth, Width - WindowInfo.MinContainerWidth - 1)
+                if Tabs and Tabs.Size.X.Offset > SidebarLimit and Library.Window and Library.Window.SetSidebarWidth then
+                    Library.Window:SetSidebarWidth(Tabs.Size.X.Offset)
+                else
+                    RefreshHeaderLayout()
+                end
                 if Width ~= GUIAppearance.WindowWidth or Height ~= GUIAppearance.WindowHeight then
                     GUIAppearance.WindowWidth = ValidateGUIAppearanceValue("WindowWidth", Width) or GUIAppearance.WindowWidth
                     GUIAppearance.WindowHeight = ValidateGUIAppearanceValue("WindowHeight", Height) or GUIAppearance.WindowHeight
@@ -13419,6 +13548,7 @@ function Library:CreateWindow(WindowInfo)
         DividerLine.Position = UDim2.fromOffset(Width, 0)
         TitleHolder.Size = UDim2.new(0, Width, 1, 0)
         RightWrapper.Size = UDim2.new(1, -Width - (Library.IsMobile and 116 or 80), 1, -12)
+        RefreshHeaderLayout()
         Tabs.Size = UDim2.new(0, Width, 1, Library.IsMobile and -47 or -77)
         Container.Size = UDim2.new(1, -Width - 1, 1, Library.IsMobile and -47 or -77)
         if WindowInfo.EnableCompacting then
@@ -13435,26 +13565,50 @@ function Library:CreateWindow(WindowInfo)
             end)
         end
     end
-    function Window:ShowTabInfo(Name, Description)
-        CurrentTabLabel.Text = tostring(Name or "Overview")
-        CurrentTabDescription.Text = Description or "Description"
-        if Library.IsMobile then
+    local HeaderTabInfoRequested = false
+    RefreshHeaderLayout = function()
+        if not CurrentTabInfo or not SearchBox or not RightWrapper then return end
+        local FrameWidth = MainFrame.Size.X.Offset
+        if FrameWidth <= 0 then
+            FrameWidth = MainFrame.AbsoluteSize.X / math.max(0.01, Library.IsMobile and 1 or Library.DPIScale)
+        end
+        local AvailableWidth = math.max(0, FrameWidth - Window:GetSidebarWidth() - (Library.IsMobile and 116 or 80))
+        if Library.IsMobile or not HeaderTabInfoRequested then
             CurrentTabInfo.Visible = false
-            if IsDefaultSearchbarSize then
-                SearchBox.Size = UDim2.fromScale(1, 1)
-            end
+            if IsDefaultSearchbarSize then SearchBox.Size = UDim2.fromScale(1, 1) end
             return
         end
-        if IsDefaultSearchbarSize then
-            SearchBox.Size = UDim2.fromScale(0.35, 1)
+        if WindowInfo.DisableSearch then
+            CurrentTabInfo.Visible = true
+            CurrentTabInfo.Size = UDim2.fromScale(1, 1)
+            CurrentTabDescription.Visible = AvailableWidth >= 300
+            return
         end
+        if not IsDefaultSearchbarSize then
+            CurrentTabInfo.Visible = AvailableWidth >= 330
+            CurrentTabDescription.Visible = AvailableWidth >= 400
+            return
+        end
+        if AvailableWidth < 335 then
+            CurrentTabInfo.Visible = false
+            SearchBox.Size = UDim2.fromScale(1, 1)
+            return
+        end
+        local SearchWidth = math.clamp(math.floor(AvailableWidth * 0.40), 145, math.max(145, AvailableWidth - 185))
+        CurrentTabInfo.Size = UDim2.new(0, AvailableWidth - SearchWidth, 1, 0)
+        SearchBox.Size = UDim2.new(0, SearchWidth, 1, 0)
+        CurrentTabDescription.Visible = AvailableWidth >= 400
         CurrentTabInfo.Visible = true
     end
+    function Window:ShowTabInfo(Name, Description)
+        CurrentTabLabel.Text = tostring(Name or "Overview")
+        CurrentTabDescription.Text = tostring(Description or "Description")
+        HeaderTabInfoRequested = true
+        RefreshHeaderLayout()
+    end
     function Window:HideTabInfo()
-        CurrentTabInfo.Visible = false
-        if IsDefaultSearchbarSize then
-            SearchBox.Size = UDim2.fromScale(1, 1)
-        end
+        HeaderTabInfoRequested = false
+        RefreshHeaderLayout()
     end
     local ResponsiveUpdatePending = false
     local LastResponsiveViewport = Vector2.zero
@@ -13635,10 +13789,10 @@ function Library:CreateWindow(WindowInfo)
                 CanvasSize = UDim2.fromScale(0, 0),
                 Position = UDim2.fromOffset(2, Library.IsMobile and 1 or 2),
                 ScrollBarImageColor3 = "AccentColor",
-                ScrollBarImageTransparency = Library.IsMobile and 0.55 or 0,
-                ScrollBarThickness = Library.IsMobile and 2 or 8,
+                ScrollBarImageTransparency = Library.IsMobile and 0.55 or 0.35,
+                ScrollBarThickness = Library.IsMobile and 2 or 3,
                 ScrollingDirection = Enum.ScrollingDirection.X,
-                Size = UDim2.new(1, -4, 0, Library.IsMobile and 29 or 48),
+                Size = UDim2.new(1, -4, 0, Library.IsMobile and 29 or 44),
                 Visible = false,
                 Parent = TabContainer,
             })
@@ -13656,7 +13810,7 @@ function Library:CreateWindow(WindowInfo)
                 Parent = SubPageBar,
             })
             SubPageDivider = Library:MakeLine(TabContainer, {
-                Position = UDim2.fromOffset(0, Library.IsMobile and 31 or 52),
+                Position = UDim2.fromOffset(0, Library.IsMobile and 31 or 48),
                 Size = UDim2.new(1, 0, 0, 1),
             })
             SubPageDivider.Visible = false
@@ -14433,7 +14587,7 @@ function Library:CreateWindow(WindowInfo)
             end
         end
         function Tab:RefreshSides()
-            local SubPageOffset = SubPageBar.Visible and (Library.IsMobile and 34 or 56) or 0
+            local SubPageOffset = SubPageBar.Visible and (Library.IsMobile and 34 or 52) or 0
             local WarningOffset = WarningBoxHolder.Visible and WarningBox.Size.Y.Offset + 8 or 0
             local Offset = SubPageOffset + WarningOffset
 
@@ -17878,6 +18032,8 @@ function Library:LoadSettingsTab(Window, SettingsInfo)
     AddAppearanceDropdown(CustomizeControls, "Density", "Control Density", {"Comfortable", "Compact"})
     AddAppearanceSlider(CustomizeControls, "RowScale", "Control Height", 65, 160, "%")
     AddAppearanceSlider(CustomizeControls, "TextScale", "Text Size", 75, 135, "%")
+    AddAppearanceDropdown(CustomizeControls, "ButtonTextHandling", "Button Text Handling", GUIAppearanceEnums.ButtonTextHandling)
+    CustomizeControls:AddLabel("Auto Fit shrinks long labels. Wrap allows two lines. Ellipsis keeps a single line. Hover to read clipped labels.", true)
     AddAppearanceDropdown(CustomizeControls, "NotificationSide", "Notifications", {"Left", "Right"})
     AddAppearanceToggle(CustomizeControls, "CustomCursor", "Custom Mouse Cursor")
     AddAppearanceDropdown(CustomizeColors, "Font", "Interface Font", GUIAppearanceEnums.Font)
