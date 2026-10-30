@@ -390,6 +390,153 @@ end
 if Library.IsMobile then
     Library.UIDensity = "Compact"
 end
+
+local GUIAppearanceDefaults = {
+    WindowWidth = 720,
+    WindowHeight = 540,
+    WindowPosition = "Center",
+    WindowX = 90,
+    WindowY = 75,
+    SidebarWidth = 190,
+    SidebarMode = "Expanded",
+    UIScale = 100,
+    Density = Library.IsMobile and "Compact" or "Comfortable",
+    RowScale = 100,
+    TextScale = 100,
+    CornerRadius = 10,
+    WindowTransparency = 0,
+    BackgroundImageOpacity = 75,
+    MobileSidebarWidth = 175,
+    MobileButtonSize = 44,
+    MobileButtonRoundness = 8,
+    MobileButtonsSide = "Left",
+    MobileButtonsVisible = true,
+    MobileButtonsDraggable = true,
+    Font = "GothamMedium",
+    BackgroundColor = "#101115",
+    MainColor = "#1B1D23",
+    AccentColor = "#E64A9A",
+    OutlineColor = "#2E3139",
+    FontColor = "#F2F3F7",
+    Glow = false,
+    Gradient = false,
+    ToggleAnimations = true,
+    ButtonGlow = true,
+    ButtonGlowSize = 18,
+    AnimationDuration = 16,
+    CustomCursor = true,
+    NotificationSide = "Right",
+}
+local GUIAppearanceRanges = {
+    WindowWidth = {480, 1600}, WindowHeight = {360, 1100}, WindowX = {0, 2000}, WindowY = {0, 1400},
+    SidebarWidth = {52, 420}, UIScale = {50, 175}, RowScale = {65, 160}, TextScale = {75, 135},
+    CornerRadius = {0, 20}, WindowTransparency = {0, 70}, BackgroundImageOpacity = {0, 100},
+    MobileSidebarWidth = {100, 260}, MobileButtonSize = {30, 72}, MobileButtonRoundness = {0, 36},
+    ButtonGlowSize = {12, 22}, AnimationDuration = {5, 60},
+}
+local GUIAppearanceEnums = {
+    WindowPosition = {"Center", "Custom"}, SidebarMode = {"Expanded", "Collapsed"},
+    Density = {"Comfortable", "Compact"}, MobileButtonsSide = {"Left", "Right"},
+    Font = {"GothamMedium", "Gotham", "GothamBold", "GothamBlack", "SourceSans", "Arial", "Code"},
+    NotificationSide = {"Left", "Right"},
+}
+local GUIAppearanceColorKeys = {"BackgroundColor", "MainColor", "AccentColor", "OutlineColor", "FontColor"}
+local GUIAppearanceBooleanKeys = {
+    Glow = true, Gradient = true, ToggleAnimations = true, ButtonGlow = true,
+    CustomCursor = true, MobileButtonsVisible = true, MobileButtonsDraggable = true,
+}
+local function RGBToHex(Color)
+    return string.format("#%02X%02X%02X", math.floor(Color.R * 255 + 0.5), math.floor(Color.G * 255 + 0.5), math.floor(Color.B * 255 + 0.5))
+end
+local function HexToRGB(Hex)
+    if typeof(Hex) ~= "string" then return nil end
+    local Digits = Hex:match("^#?(%x%x%x%x%x%x)$")
+    if not Digits then return nil end
+    return Color3.fromRGB(tonumber(Digits:sub(1,2), 16), tonumber(Digits:sub(3,4), 16), tonumber(Digits:sub(5,6), 16))
+end
+local function ValidateGUIAppearanceValue(Key, Value)
+    if GUIAppearanceDefaults[Key] == nil then return nil end
+    if GUIAppearanceRanges[Key] then
+        local Range = GUIAppearanceRanges[Key]
+        local Number = tonumber(Value)
+        if Number == nil or Number ~= Number then return nil end
+        return math.floor(math.clamp(Number, Range[1], Range[2]) + 0.5)
+    end
+    if GUIAppearanceEnums[Key] then
+        if typeof(Value) ~= "string" then return nil end
+        return table.find(GUIAppearanceEnums[Key], Value) and Value or nil
+    end
+    if GUIAppearanceBooleanKeys[Key] then
+        if typeof(Value) == "boolean" then return Value end
+        return nil
+    end
+    if table.find(GUIAppearanceColorKeys, Key) then
+        local Color = typeof(Value) == "Color3" and Value or HexToRGB(Value)
+        return Color and RGBToHex(Color) or nil
+    end
+    return nil
+end
+local GUIAppearance = table.clone(GUIAppearanceDefaults)
+local GUIAppearancePath = "ZeroPoint/GUIAppearance.json"
+local GUIAppearancePresetsPath = "ZeroPoint/GUIAppearancePresets.json"
+local function LoadAppearanceFile(Path)
+    if typeof(readfile) ~= "function" then return nil end
+    if typeof(isfile) == "function" then
+        local Good, Exists = pcall(isfile, Path)
+        if not Good or not Exists then return nil end
+    end
+    local Good, Contents = pcall(readfile, Path)
+    if not Good or typeof(Contents) ~= "string" then return nil end
+    local Parsed, Data = pcall(HttpService.JSONDecode, HttpService, Contents)
+    return Parsed and typeof(Data) == "table" and Data or nil
+end
+local function SaveAppearanceFile(Path, Data)
+    if typeof(writefile) ~= "function" then return false, "This executor does not support writefile" end
+    if typeof(isfolder) == "function" and typeof(makefolder) == "function" then
+        local Checked, FolderExists = pcall(isfolder, "ZeroPoint")
+        if Checked and not FolderExists then
+            local Made, Why = pcall(makefolder, "ZeroPoint")
+            if not Made then return false, tostring(Why) end
+        end
+    end
+    local GoodEncode, Encoded = pcall(HttpService.JSONEncode, HttpService, Data)
+    if not GoodEncode then return false, tostring(Encoded) end
+    local GoodWrite, Failure = pcall(writefile, Path, Encoded)
+    return GoodWrite, GoodWrite and nil or tostring(Failure)
+end
+local InitialGUIAppearance = LoadAppearanceFile(GUIAppearancePath)
+if InitialGUIAppearance then
+    for Key, Value in pairs(InitialGUIAppearance) do
+        local Checked = ValidateGUIAppearanceValue(Key, Value)
+        if Checked ~= nil then GUIAppearance[Key] = Checked end
+    end
+end
+Library.GUIAppearance = GUIAppearance
+Library.GUIAppearanceDefaults = GUIAppearanceDefaults
+Library.GUIAppearanceRanges = GUIAppearanceRanges
+Library.GUIAppearancePresetsPath = GUIAppearancePresetsPath
+Library.GUIAppearanceSaveGeneration = 0
+Library.GUIAppearanceSyncing = false
+Library.RowHeightScale = GUIAppearance.RowScale / 100
+Library.GUITextScale = GUIAppearance.TextScale / 100
+Library.GUITextObjects = {}
+Library.UIDensity = GUIAppearance.Density
+Library.CornerRadius = GUIAppearance.CornerRadius
+Library.MobileMenuSize = 80
+Library.ButtonGlowEnabled = GUIAppearance.ButtonGlow
+Library.ToggleAnimationsEnabled = GUIAppearance.ToggleAnimations
+Library.ButtonGlowSize = GUIAppearance.ButtonGlowSize
+Library.ShowCustomCursor = GUIAppearance.CustomCursor
+Library.NotifySide = GUIAppearance.NotificationSide
+Library.Scheme.WindowGlow = GUIAppearance.Glow
+Library.Scheme.GradientEnabled = GUIAppearance.Gradient
+for _, Key in ipairs(GUIAppearanceColorKeys) do
+    Library.Scheme[Key] = HexToRGB(GUIAppearance[Key])
+end
+Library.Scheme.Font = Font.fromEnum(Enum.Font[GUIAppearance.Font])
+Library.TweenInfo = TweenInfo.new(GUIAppearance.AnimationDuration / 100, Enum.EasingStyle.Quad, Enum.EasingDirection.Out)
+Library.ToggleTweenInfo = TweenInfo.new(GUIAppearance.AnimationDuration / 100, Enum.EasingStyle.Quart, Enum.EasingDirection.Out)
+
 local Templates = {
     Frame = {
         BorderSizePixel = 0,
@@ -1607,7 +1754,7 @@ function Library:RegisterDensityRow(Frame, ComfortableHeight, CompactHeight)
     }
     table.insert(self.DensityRows, Entry)
     local Height = self.UIDensity == "Compact" and CompactHeight or ComfortableHeight
-    Frame.Size = UDim2.new(Frame.Size.X.Scale, Frame.Size.X.Offset, 0, Height)
+    Frame.Size = UDim2.new(Frame.Size.X.Scale, Frame.Size.X.Offset, 0, math.max(16, math.floor(Height * (self.RowHeightScale or 1) + 0.5)))
     return Entry
 end
 
@@ -1622,7 +1769,7 @@ function Library:SetUIDensity(Density)
             table.remove(self.DensityRows, Index)
         else
             local Height = Density == "Compact" and Entry.Compact or Entry.Comfortable
-            Entry.Frame.Size = UDim2.new(Entry.Frame.Size.X.Scale, Entry.Frame.Size.X.Offset, 0, Height)
+            Entry.Frame.Size = UDim2.new(Entry.Frame.Size.X.Scale, Entry.Frame.Size.X.Offset, 0, math.max(16, math.floor(Height * (self.RowHeightScale or 1) + 0.5)))
         end
     end
     if not RefreshDensityScheduled then
@@ -1672,6 +1819,12 @@ function Library:SetThemePreset(Name)
     self.Scheme.Font = Font.fromEnum(Enum.Font.GothamMedium)
     self.IsLightTheme = false
     self:UpdateColorsUsingRegistry()
+    for _, Key in ipairs(GUIAppearanceColorKeys) do
+        self.GUIAppearance[Key] = RGBToHex(self.Scheme[Key])
+    end
+    self.GUIAppearance.Font = "GothamMedium"
+    self:QueueGUIAppearanceSave()
+    if self.RefreshGUIAppearanceControls then self:RefreshGUIAppearanceControls() end
     return true
 end
 
@@ -1697,6 +1850,152 @@ function Library:SetDPIScale(DPIScale: number)
         Library.Window:RefreshMobileLayout(true)
     end
 end
+function Library:SaveGUIAppearance()
+    self.GUIAppearanceSaveGeneration += 1
+    return SaveAppearanceFile(GUIAppearancePath, self.GUIAppearance)
+end
+function Library:QueueGUIAppearanceSave()
+    self.GUIAppearanceSaveGeneration += 1
+    local Generation = self.GUIAppearanceSaveGeneration
+    task.delay(0.55, function()
+        if not self.Unloaded and Generation == self.GUIAppearanceSaveGeneration then
+            SaveAppearanceFile(GUIAppearancePath, self.GUIAppearance)
+        end
+    end)
+end
+function Library:ApplyGUIAppearanceProperty(Key)
+    local Value = self.GUIAppearance[Key]
+    local Window = self.Window
+    if table.find(GUIAppearanceColorKeys, Key) then
+        self.Scheme[Key] = HexToRGB(Value)
+        if self.UpdateColorsUsingRegistry then self:UpdateColorsUsingRegistry() end
+    elseif Key == "Font" then
+        self:SetFont(Enum.Font[Value])
+    elseif Key == "WindowWidth" or Key == "WindowHeight" then
+        if Window and Window.SetWindowSize then
+            Window:SetWindowSize(self.GUIAppearance.WindowWidth, self.GUIAppearance.WindowHeight)
+        end
+    elseif Key == "WindowPosition" or Key == "WindowX" or Key == "WindowY" then
+        if Window and Window.SetGUIWindowPosition then
+            Window:SetGUIWindowPosition(self.GUIAppearance.WindowPosition, self.GUIAppearance.WindowX, self.GUIAppearance.WindowY)
+        end
+    elseif Key == "SidebarWidth" or Key == "SidebarMode" then
+        if Window and not self.IsMobile then
+            Window:SetSidebarWidth(self.GUIAppearance.SidebarMode == "Collapsed" and 52 or self.GUIAppearance.SidebarWidth)
+        end
+    elseif Key == "MobileSidebarWidth" then
+        if self.IsMobile and Window and Window.RefreshMobileLayout then Window:RefreshMobileLayout(true) end
+    elseif Key == "UIScale" then
+        self:SetDPIScale(Value)
+    elseif Key == "Density" then
+        self:SetUIDensity(Value)
+    elseif Key == "RowScale" then
+        self.RowHeightScale = Value / 100
+        self:SetUIDensity(self.UIDensity)
+    elseif Key == "TextScale" then
+        self.GUITextScale = Value / 100
+        for Index = #self.GUITextObjects, 1, -1 do
+            local Entry = self.GUITextObjects[Index]
+            if not Entry.Object or not Entry.Object.Parent then
+                table.remove(self.GUITextObjects, Index)
+            else
+                Entry.Object.TextSize = math.max(8, math.floor(Entry.Size * self.GUITextScale + 0.5))
+            end
+        end
+    elseif Key == "CornerRadius" then
+        if Window then Window:SetCornerRadius(Value) else self.CornerRadius = Value end
+    elseif Key == "WindowTransparency" then
+        if Window then Window:SetWindowTransparency(Value) end
+    elseif Key == "BackgroundImageOpacity" then
+        if Window and Window.SetBackgroundImageOpacity then Window:SetBackgroundImageOpacity(Value) end
+    elseif Key == "Glow" then
+        self:SetGlow(Value)
+    elseif Key == "Gradient" then
+        self:SetGradientAnimation(Value)
+    elseif Key == "ToggleAnimations" then
+        self.ToggleAnimationsEnabled = Value
+    elseif Key == "ButtonGlow" then
+        self.ButtonGlowEnabled = Value
+        if not Value then
+            for _, Button in pairs(self.Buttons) do
+                if typeof(Button) == "table" and Button.RefreshGlow then Button.RefreshGlow() end
+            end
+        end
+    elseif Key == "ButtonGlowSize" then
+        self.ButtonGlowSize = Value
+    elseif Key == "AnimationDuration" then
+        self.TweenInfo = TweenInfo.new(Value / 100, Enum.EasingStyle.Quad, Enum.EasingDirection.Out)
+        self.ToggleTweenInfo = TweenInfo.new(Value / 100, Enum.EasingStyle.Quart, Enum.EasingDirection.Out)
+    elseif Key == "MobileButtonSize" or Key == "MobileButtonRoundness" or Key == "MobileButtonsSide" or Key == "MobileButtonsVisible" then
+        if Window and Window.UpdateGUIAppearanceMobileButtons then Window:UpdateGUIAppearanceMobileButtons() end
+    elseif Key == "MobileButtonsDraggable" then
+        self:SetMobileButtonDragging(Value)
+    elseif Key == "CustomCursor" then
+        self.ShowCustomCursor = Value
+    elseif Key == "NotificationSide" then
+        self:SetNotifySide(Value)
+    end
+end
+function Library:SetGUIAppearanceValue(Key, Value, DontSave)
+    local Checked = ValidateGUIAppearanceValue(Key, Value)
+    if Checked == nil then return false, "Invalid appearance setting: " .. tostring(Key) end
+    self.GUIAppearance[Key] = Checked
+    self:ApplyGUIAppearanceProperty(Key)
+    if not DontSave and not self.GUIAppearanceSyncing then self:QueueGUIAppearanceSave() end
+    return true
+end
+function Library:ApplyGUIAppearance(Values)
+    if typeof(Values) == "table" then
+        for Key, Value in pairs(Values) do
+            local Checked = ValidateGUIAppearanceValue(Key, Value)
+            if Checked ~= nil then self.GUIAppearance[Key] = Checked end
+        end
+    end
+    local Order = {
+        "BackgroundColor", "MainColor", "AccentColor", "OutlineColor", "FontColor", "Font",
+        "WindowWidth", "WindowHeight", "WindowPosition", "SidebarWidth", "SidebarMode", "UIScale", "Density", "RowScale", "TextScale",
+        "CornerRadius", "WindowTransparency", "BackgroundImageOpacity", "MobileSidebarWidth", "MobileButtonSize",
+        "MobileButtonRoundness", "MobileButtonsSide", "MobileButtonsVisible", "MobileButtonsDraggable", "Glow", "Gradient",
+        "ToggleAnimations", "ButtonGlow", "ButtonGlowSize", "AnimationDuration", "CustomCursor", "NotificationSide",
+    }
+    for _, Key in ipairs(Order) do self:ApplyGUIAppearanceProperty(Key) end
+end
+function Library:ResetGUIAppearance()
+    self:ApplyGUIAppearance(self.GUIAppearanceDefaults)
+    self:SaveGUIAppearance()
+end
+function Library:ExportGUIAppearance()
+    return HttpService:JSONEncode(self.GUIAppearance)
+end
+function Library:ImportGUIAppearance(JSON)
+    if typeof(JSON) ~= "string" or #JSON > 16000 then return false, "Invalid JSON length" end
+    local Good, Parsed = pcall(HttpService.JSONDecode, HttpService, JSON)
+    if not Good or typeof(Parsed) ~= "table" then return false, "Expected a JSON object" end
+    local Matched = 0
+    local Applied = table.clone(self.GUIAppearance)
+    for Key, Value in pairs(Parsed) do
+        local Checked = ValidateGUIAppearanceValue(Key, Value)
+        if Checked ~= nil then Applied[Key] = Checked; Matched += 1 end
+    end
+    if Matched == 0 then return false, "No recognized appearance settings found" end
+    self:ApplyGUIAppearance(Applied)
+    self:SaveGUIAppearance()
+    return true
+end
+function Library:SaveGUIAppearancePreset(Slot)
+    if Slot ~= "Slot 1" and Slot ~= "Slot 2" and Slot ~= "Slot 3" then return false, "Unknown preset" end
+    local Presets = LoadAppearanceFile(GUIAppearancePresetsPath) or {}
+    Presets[Slot] = table.clone(self.GUIAppearance)
+    return SaveAppearanceFile(GUIAppearancePresetsPath, Presets)
+end
+function Library:LoadGUIAppearancePreset(Slot)
+    local Presets = LoadAppearanceFile(GUIAppearancePresetsPath)
+    if not Presets or typeof(Presets[Slot]) ~= "table" then return false, "Preset slot is empty" end
+    self:ApplyGUIAppearance(Presets[Slot])
+    self:SaveGUIAppearance()
+    return true
+end
+
 function Library:GiveSignal(Connection: RBXScriptConnection | RBXScriptSignal)
     local ConnectionType = typeof(Connection)
     if Connection and (ConnectionType == "RBXScriptConnection" or ConnectionType == "RBXScriptSignal") then
@@ -1956,6 +2255,15 @@ local function New(ClassName: string, Properties: { [string]: any }): any
     end
 
     FillInstance(Properties, Object)
+    if Object:IsA("TextLabel") or Object:IsA("TextButton") or Object:IsA("TextBox") then
+        local OriginalSize = Object.TextSize
+        if OriginalSize > 0 then
+            table.insert(Library.GUITextObjects, { Object = Object, Size = OriginalSize })
+            if Library.GUITextScale ~= 1 then
+                Object.TextSize = math.max(8, math.floor(OriginalSize * Library.GUITextScale + 0.5))
+            end
+        end
+    end
 
     if Parent and Properties.ZIndex == nil then
         pcall(function()
@@ -3499,6 +3807,7 @@ function Library:OnUnload(Callback, Label)
     Library.UnloadSignalLabels[Callback] = Label or "Unload callback"
 end
 function Library:Unload()
+    self:SaveGUIAppearance()
     if Library.Unloading then return false end
     Library.Unloading = true
     local FirstUnload = not Library.Unloaded
@@ -5023,7 +5332,7 @@ do
                 Transparency = Button.Disabled and 0.5 or 0,
                 Parent = Base,
             })
-            if Library.ButtonGlowEnabled then
+            if true then
                 Base.ClipsDescendants = true
                 local GlowColor = Button.Risky and "RedColor" or "AccentColor"
                 local HaloSize = math.clamp(tonumber(Library.ButtonGlowSize) or 18, 12, 22)
@@ -11985,6 +12294,15 @@ end
 
 function Library:CreateWindow(WindowInfo)
     WindowInfo = Library:Validate(WindowInfo, Templates.Window)
+    WindowInfo.Size = UDim2.fromOffset(GUIAppearance.WindowWidth, GUIAppearance.WindowHeight)
+    WindowInfo.Center = GUIAppearance.WindowPosition == "Center"
+    WindowInfo.SidebarCompacted = GUIAppearance.SidebarMode == "Collapsed" and not Library.IsMobile
+    WindowInfo.EnableSidebarResize = true
+    WindowInfo.CornerRadius = GUIAppearance.CornerRadius
+    WindowInfo.Glow = GUIAppearance.Glow
+    WindowInfo.MobileButtonDragging = GUIAppearance.MobileButtonsDraggable
+    WindowInfo.MobileButtonsSide = GUIAppearance.MobileButtonsSide
+    WindowInfo.ShowMobileButtons = GUIAppearance.MobileButtonsVisible
 
     local CurrentCamera = workspace.CurrentCamera
 
@@ -12079,7 +12397,7 @@ function Library:CreateWindow(WindowInfo)
     local GradientOverlay
     local BottomBackground
     local FooterLabel
-    local InitialLeftWidth = math.clamp(math.floor(WindowInfo.Size.X.Offset * 0.265 + 0.5), 170, 210)
+    local InitialLeftWidth = Library.IsMobile and GUIAppearance.MobileSidebarWidth or GUIAppearance.SidebarWidth
     local IsCompact = WindowInfo.SidebarCompacted
     local LastExpandedWidth = InitialLeftWidth
     do
@@ -12180,7 +12498,7 @@ function Library:CreateWindow(WindowInfo)
             ScaleType = Enum.ScaleType.Stretch,
             ZIndex = 2,
             BackgroundTransparency = 1,
-            ImageTransparency = 0.75,
+            ImageTransparency = GUIAppearance.BackgroundImageOpacity / 100,
             Visible = Library.Scheme.BackgroundImageEnabled and InitialBackgroundImage ~= "",
             Parent = MainFrame,
         })
@@ -12716,6 +13034,13 @@ function Library:CreateWindow(WindowInfo)
                 for _, Tab in Library.Tabs do
                     Tab:Resize(true)
                 end
+                local Width = math.floor(MainFrame.Size.X.Offset + 0.5)
+                local Height = math.floor(MainFrame.Size.Y.Offset + 0.5)
+                if Width ~= GUIAppearance.WindowWidth or Height ~= GUIAppearance.WindowHeight then
+                    GUIAppearance.WindowWidth = ValidateGUIAppearanceValue("WindowWidth", Width) or GUIAppearance.WindowWidth
+                    GUIAppearance.WindowHeight = ValidateGUIAppearanceValue("WindowHeight", Height) or GUIAppearance.WindowHeight
+                    Library:QueueGUIAppearanceSave()
+                end
             end)
         end
         if ResizeButton then
@@ -12903,7 +13228,7 @@ function Library:CreateWindow(WindowInfo)
         RefreshDensityButton()
         DensityButton.MouseButton1Click:Connect(function()
             local NextDensity = Library.UIDensity == "Comfortable" and "Compact" or "Comfortable"
-            Library:SetUIDensity(NextDensity)
+            Library:SetGUIAppearanceValue("Density", NextDensity)
             if Options.UISettingsDensity and Options.UISettingsDensity.Value ~= NextDensity then
                 Options.UISettingsDensity:SetValue(NextDensity)
             end
@@ -13008,6 +13333,38 @@ function Library:CreateWindow(WindowInfo)
                 Tabbox:UpdateCorners()
             end
         end
+    end
+    function Window:SetWindowSize(Width, Height)
+        if Library.IsMobile then return end
+        local Camera = workspace.CurrentCamera
+        local Viewport = Camera and Camera.ViewportSize or Vector2.new(900, 700)
+        local MaxWidth = math.max(1, Viewport.X - 20)
+        local MaxHeight = math.max(1, Viewport.Y - 20)
+        Width = math.clamp(math.floor(tonumber(Width) or 720), math.min(Library.MinSize.X, MaxWidth), MaxWidth)
+        Height = math.clamp(math.floor(tonumber(Height) or 540), math.min(Library.MinSize.Y, MaxHeight), MaxHeight)
+        MainFrame.Size = UDim2.fromOffset(Width, Height)
+        if GUIAppearance.WindowPosition == "Center" then
+            MainFrame.Position = UDim2.new(0.5, -Width / 2, 0.5, -Height / 2)
+        end
+        for _, Tab in pairs(Library.Tabs) do
+            if typeof(Tab.Resize) == "function" then Tab:Resize(true) end
+        end
+        Window:SetSidebarWidth(GUIAppearance.SidebarMode == "Collapsed" and 52 or GUIAppearance.SidebarWidth)
+    end
+    function Window:SetGUIWindowPosition(Mode, X, Y)
+        if Library.IsMobile then return end
+        if Mode == "Center" then
+            MainFrame.Position = UDim2.new(0.5, -MainFrame.Size.X.Offset / 2, 0.5, -MainFrame.Size.Y.Offset / 2)
+        else
+            local Viewport = workspace.CurrentCamera and workspace.CurrentCamera.ViewportSize or Vector2.new(1400, 900)
+            MainFrame.Position = UDim2.fromOffset(
+                math.clamp(X, 0, math.max(0, Viewport.X - 60)),
+                math.clamp(Y, 0, math.max(0, Viewport.Y - 60))
+            )
+        end
+    end
+    function Window:SetBackgroundImageOpacity(Opacity)
+        if BackgroundImage then BackgroundImage.ImageTransparency = math.clamp(Opacity / 100, 0, 1) end
     end
     function Window:SetWindowTransparency(Transparency: number)
         assert(typeof(Transparency) == "number", "Expected number for Transparency, got: " .. typeof(Transparency))
@@ -13132,7 +13489,7 @@ function Library:CreateWindow(WindowInfo)
             Library.MobileMainFrameScale.Scale = 1
         end
         Library.MinSize = Vector2.new(1, 1)
-        local PreferredSidebar = math.clamp(math.floor(Viewport.X * 0.35 + 0.5), 155, 190)
+        local PreferredSidebar = GUIAppearance.MobileSidebarWidth
         local MaximumSidebar = math.max(WindowInfo.SidebarCompactWidth, Viewport.X - 170)
         local SidebarWidth = math.max(WindowInfo.SidebarCompactWidth, math.min(PreferredSidebar, MaximumSidebar))
         if math.abs(Window:GetSidebarWidth() - SidebarWidth) > 1 then
@@ -16315,23 +16672,22 @@ function Library:CreateWindow(WindowInfo)
     if Library.IsMobile then
         local ToggleButton
         local LockButton
+        local MobileCornerObjects = {}
         local function CreateSquareMobileButton(IconName)
             local T = {}
             local Btn = New("TextButton", {
                 BackgroundColor3 = "MainColor",
                 Position = UDim2.fromOffset(8, 8),
-                Size = UDim2.fromOffset(44, 44),
+                Size = UDim2.fromOffset(GUIAppearance.MobileButtonSize, GUIAppearance.MobileButtonSize),
                 Text = "",
                 ZIndex = 10001,
                 Parent = ScreenGui,
             })
-            table.insert(
-                Library.Corners,
-                New("UICorner", {
-                    CornerRadius = UDim.new(0, math.min(WindowInfo.CornerRadius, 8)),
-                    Parent = Btn,
-                })
-            )
+            local MobileCorner = New("UICorner", {
+                CornerRadius = UDim.new(0, GUIAppearance.MobileButtonRoundness),
+                Parent = Btn,
+            })
+            table.insert(MobileCornerObjects, MobileCorner)
             Library:AddOutline(Btn)
             local AccentLine = New("Frame", {
                 AnchorPoint = Vector2.new(0.5, 1),
@@ -16350,7 +16706,7 @@ function Library:CreateWindow(WindowInfo)
                 AnchorPoint = Vector2.new(0.5, 0.5),
                 ImageColor3 = "FontColor",
                 Position = UDim2.fromScale(0.5, 0.5),
-                Size = UDim2.fromOffset(21, 21),
+                Size = UDim2.fromOffset(math.floor(GUIAppearance.MobileButtonSize * 0.48), math.floor(GUIAppearance.MobileButtonSize * 0.48)),
                 ZIndex = 10002,
                 Parent = Btn,
             })
@@ -16382,11 +16738,31 @@ function Library:CreateWindow(WindowInfo)
             ToggleButton:SetIconColor(
                 Library.Toggled and Library.Scheme.AccentColor or Library.Scheme.FontColor
             )
-            local ShowFloatingButtons = not Library.Toggled and WindowInfo.ShowMobileButtons ~= false
+            local ShowFloatingButtons = not Library.Toggled and GUIAppearance.MobileButtonsVisible
             ToggleButton.Button.Visible = ShowFloatingButtons
             if LockButton then
                 LockButton.Button.Visible = ShowFloatingButtons
             end
+        end
+        function Window:UpdateGUIAppearanceMobileButtons()
+            local Size = GUIAppearance.MobileButtonSize
+            local Side = GUIAppearance.MobileButtonsSide
+            local PosX = Side == "Right" and -8 or 8
+            for _, MobileButton in ipairs({ ToggleButton, LockButton }) do
+                if MobileButton then
+                    MobileButton.Button.Size = UDim2.fromOffset(Size, Size)
+                    MobileButton.Button.AnchorPoint = Side == "Right" and Vector2.new(1, 0) or Vector2.zero
+                    MobileButton.Icon.Size = UDim2.fromOffset(math.floor(Size * 0.48), math.floor(Size * 0.48))
+                end
+            end
+            for _, Corner in ipairs(MobileCornerObjects) do
+                Corner.CornerRadius = UDim.new(0, math.min(GUIAppearance.MobileButtonRoundness, Size / 2))
+            end
+            ToggleButton.Button.Position = Side == "Right" and UDim2.new(1, PosX, 0, 8) or UDim2.fromOffset(8, 8)
+            if LockButton then
+                LockButton.Button.Position = Side == "Right" and UDim2.new(1, PosX, 0, Size + 16) or UDim2.fromOffset(8, Size + 16)
+            end
+            UpdateMobileToggleButton()
         end
         Library.UpdateMobileToggleButton = UpdateMobileToggleButton
         ToggleButton.Button.MouseButton1Click:Connect(function()
@@ -16423,7 +16799,7 @@ function Library:CreateWindow(WindowInfo)
             ToggleButton.Button.Visible = false
             LockButton.Button.Visible = false
         end
-        UpdateMobileToggleButton()
+        Window:UpdateGUIAppearanceMobileButtons()
     end
     Library:GiveSignal(SearchBox:GetPropertyChangedSignal("Text"):Connect(function()
         local Query = SearchBox.Text
@@ -16466,6 +16842,7 @@ function Library:CreateWindow(WindowInfo)
         Library.IsRobloxFocused = false
     end))
     Library.Window = Window
+    Library:ApplyGUIAppearance()
     return Window
 end
 function Library:CreateLoading(LoadingInfo)
@@ -17421,6 +17798,13 @@ function Library:LoadSettingsTab(Window, SettingsInfo)
             ShowName = ShowSubPageNames,
             ShowIcon = ShowSubPageIcons,
         }),
+        Customize = SettingsTab:AddSubPage({
+            Name = "Customize",
+            Icon = "sliders-horizontal",
+            Description = "Fully personalize the menu, colors, layouts, controls and animations",
+            ShowName = ShowSubPageNames,
+            ShowIcon = ShowSubPageIcons,
+        }),
         Watermark = SettingsTab:AddSubPage({
             Name = "Watermark",
             Icon = "monitor",
@@ -17454,6 +17838,135 @@ function Library:LoadSettingsTab(Window, SettingsInfo)
     SettingsTab:SetSingleColumn(OneBigSettingsTab)
 
     local MenuGroup = Pages.Menu:AddLeftGroupbox("Interface", "wrench")
+    local CustomizeLayout = Pages.Customize:AddLeftGroupbox("Window & Sidebar", "panel-left")
+    local CustomizeControls = Pages.Customize:AddRightGroupbox("Controls & Spacing", "sliders-horizontal")
+    local CustomizeColors = Pages.Customize:AddLeftGroupbox("Colors & Fonts", "palette")
+    local CustomizeMotion = Pages.Customize:AddRightGroupbox("Effects & Interaction", "sparkles")
+    local CustomizePresets = Pages.Customize:AddLeftGroupbox("Appearance Presets", "save")
+    local CustomizeMobile = Pages.Customize:AddRightGroupbox("Mobile", "smartphone")
+    CustomizeLayout:AddLabel("Changes apply immediately. The menu size and preferences are restored next time you run it.")
+    local function AddAppearanceSlider(Group, Key, Text, Min, Max, Suffix)
+        return Group:AddSlider("GUIAppearance" .. Key, {
+            Text = Text, Min = Min, Max = Max, Rounding = 0,
+            Default = GUIAppearance[Key], Suffix = Suffix or "",
+            Callback = function(Value) Library:SetGUIAppearanceValue(Key, Value) end,
+        })
+    end
+    local function AddAppearanceDropdown(Group, Key, Text, Values)
+        return Group:AddDropdown("GUIAppearance" .. Key, {
+            Text = Text, Values = Values, Default = GUIAppearance[Key],
+            Callback = function(Value) Library:SetGUIAppearanceValue(Key, Value) end,
+        })
+    end
+    local function AddAppearanceToggle(Group, Key, Text)
+        return Group:AddToggle("GUIAppearance" .. Key, {
+            Text = Text, Default = GUIAppearance[Key],
+            Callback = function(Value) Library:SetGUIAppearanceValue(Key, Value) end,
+        })
+    end
+    AddAppearanceSlider(CustomizeLayout, "WindowWidth", "Window Width", 480, 1600, " px")
+    AddAppearanceSlider(CustomizeLayout, "WindowHeight", "Window Height", 360, 1100, " px")
+    AddAppearanceSlider(CustomizeLayout, "SidebarWidth", "Sidebar Width", 52, 420, " px")
+    AddAppearanceDropdown(CustomizeLayout, "SidebarMode", "Sidebar Mode", {"Expanded", "Collapsed"})
+    AddAppearanceDropdown(CustomizeLayout, "WindowPosition", "Window Position", {"Center", "Custom"})
+    AddAppearanceSlider(CustomizeLayout, "WindowX", "Custom X Position", 0, 2000, " px")
+    AddAppearanceSlider(CustomizeLayout, "WindowY", "Custom Y Position", 0, 1400, " px")
+    AddAppearanceSlider(CustomizeLayout, "UIScale", "Interface Scale", 50, 175, "%")
+    AddAppearanceSlider(CustomizeLayout, "CornerRadius", "Corner Roundness", 0, 20, " px")
+    AddAppearanceSlider(CustomizeLayout, "WindowTransparency", "Window Transparency", 0, 70, "%")
+    AddAppearanceSlider(CustomizeLayout, "BackgroundImageOpacity", "Background Image Transparency", 0, 100, "%")
+    AddAppearanceDropdown(CustomizeControls, "Density", "Control Density", {"Comfortable", "Compact"})
+    AddAppearanceSlider(CustomizeControls, "RowScale", "Control Height", 65, 160, "%")
+    AddAppearanceSlider(CustomizeControls, "TextScale", "Text Size", 75, 135, "%")
+    AddAppearanceDropdown(CustomizeControls, "NotificationSide", "Notifications", {"Left", "Right"})
+    AddAppearanceToggle(CustomizeControls, "CustomCursor", "Custom Mouse Cursor")
+    AddAppearanceDropdown(CustomizeColors, "Font", "Interface Font", GUIAppearanceEnums.Font)
+    for _, Key in ipairs(GUIAppearanceColorKeys) do
+        local ColorName = Key:gsub("Color$", " Color")
+        CustomizeColors:AddLabel(ColorName):AddColorPicker("GUIAppearance" .. Key, {
+            Default = HexToRGB(GUIAppearance[Key]), Title = ColorName,
+            Callback = function(Value) Library:SetGUIAppearanceValue(Key, Value) end,
+        })
+    end
+    AddAppearanceToggle(CustomizeMotion, "Glow", "Window Glow")
+    AddAppearanceToggle(CustomizeMotion, "Gradient", "Animated Gradient")
+    AddAppearanceToggle(CustomizeMotion, "ToggleAnimations", "Animate Toggles")
+    AddAppearanceToggle(CustomizeMotion, "ButtonGlow", "Button Click Glow")
+    AddAppearanceSlider(CustomizeMotion, "ButtonGlowSize", "Click Glow Size", 12, 22, " px")
+    AddAppearanceSlider(CustomizeMotion, "AnimationDuration", "Animation Duration", 5, 60, " cs")
+    CustomizeMobile:AddLabel("Mobile layout is full screen. These controls affect the sidebar and floating buttons.")
+    AddAppearanceSlider(CustomizeMobile, "MobileSidebarWidth", "Mobile Sidebar Width", 100, 260, " px")
+    AddAppearanceSlider(CustomizeMobile, "MobileButtonSize", "Floating Button Size", 30, 72, " px")
+    AddAppearanceSlider(CustomizeMobile, "MobileButtonRoundness", "Button Roundness", 0, 36, " px")
+    AddAppearanceDropdown(CustomizeMobile, "MobileButtonsSide", "Floating Buttons Side", {"Left", "Right"})
+    AddAppearanceToggle(CustomizeMobile, "MobileButtonsVisible", "Show Floating Buttons")
+    AddAppearanceToggle(CustomizeMobile, "MobileButtonsDraggable", "Drag Floating Buttons")
+    local function NotifyAppearance(Action, Success, ErrorMessage)
+        if Library.Notify then
+            Library:Notify({
+                Title = Success and (Action .. " successful") or (Action .. " failed"),
+                Description = Success and "Your appearance is updated." or tostring(ErrorMessage),
+                Time = 4,
+            })
+        end
+    end
+    local function RefreshAppearanceControls()
+        Library.GUIAppearanceSyncing = true
+        for Key, Value in pairs(GUIAppearance) do
+            local Option = Options["GUIAppearance" .. Key] or Toggles["GUIAppearance" .. Key]
+            if Option and typeof(Option.SetValue) == "function" then
+                if table.find(GUIAppearanceColorKeys, Key) then Value = HexToRGB(Value) end
+                pcall(function() Option:SetValue(Value) end)
+            end
+        end
+        if Options.UISettingsDensity then Options.UISettingsDensity:SetValue(GUIAppearance.Density) end
+        if Options.UISettingsCornerRadius then Options.UISettingsCornerRadius:SetValue(GUIAppearance.CornerRadius) end
+        if Options.UISettingsDPIScale then pcall(function() Options.UISettingsDPIScale:SetValue(tostring(GUIAppearance.UIScale) .. "%") end) end
+        Library.GUIAppearanceSyncing = false
+    end
+    Library.RefreshGUIAppearanceControls = RefreshAppearanceControls
+    CustomizePresets:AddDropdown("GUIAppearancePresetSlot", {
+        Text = "Preset Slot", Values = {"Slot 1", "Slot 2", "Slot 3"}, Default = "Slot 1",
+    })
+    CustomizePresets:AddButton("Save To Slot", function()
+        local Slot = Options.GUIAppearancePresetSlot and Options.GUIAppearancePresetSlot.Value or "Slot 1"
+        local Saved, Reason = Library:SaveGUIAppearancePreset(Slot)
+        NotifyAppearance("Save " .. Slot, Saved, Reason)
+    end)
+    CustomizePresets:AddButton("Load From Slot", function()
+        local Slot = Options.GUIAppearancePresetSlot and Options.GUIAppearancePresetSlot.Value or "Slot 1"
+        local Loaded, Reason = Library:LoadGUIAppearancePreset(Slot)
+        if Loaded then RefreshAppearanceControls() end
+        NotifyAppearance("Load " .. Slot, Loaded, Reason)
+    end)
+    CustomizePresets:AddButton("Export Appearance JSON", function()
+        if typeof(setclipboard) == "function" then
+            local Good, Reason = pcall(setclipboard, Library:ExportGUIAppearance())
+            NotifyAppearance("Copy appearance JSON", Good, Reason)
+        else
+            NotifyAppearance("Copy appearance JSON", false, "Clipboard is not supported by your executor")
+        end
+    end)
+    CustomizePresets:AddInput("GUIAppearanceImportText", {
+        Text = "Import Appearance JSON", Default = "", Finished = true,
+        Placeholder = "Paste JSON here, then click Import",
+    })
+    CustomizePresets:AddButton("Import JSON", function()
+        local Input = Options.GUIAppearanceImportText
+        local Good, Reason = Library:ImportGUIAppearance(Input and Input.Value or "")
+        if Good then RefreshAppearanceControls() end
+        NotifyAppearance("Import", Good, Reason)
+    end)
+    CustomizePresets:AddButton("Reset All Appearance Settings", function()
+        Library:ResetGUIAppearance()
+        RefreshAppearanceControls()
+        NotifyAppearance("Reset", true)
+    end)
+    CustomizePresets:AddButton("Save Appearance Now", function()
+        local Good, Reason = Library:SaveGUIAppearance()
+        NotifyAppearance("Save", Good, Reason)
+    end)
+
     local WindowGroup = Pages.Menu:AddRightGroupbox("Window", "panel-top")
     local WatermarkGroup = Pages.Watermark:AddLeftGroupbox("Watermark", "monitor")
     local ScreenEffectsGroup = Pages.Effects:AddLeftGroupbox("Screen Effects", "monitor-up")
@@ -17485,7 +17998,7 @@ function Library:LoadSettingsTab(Window, SettingsInfo)
         Text = "Custom Cursor",
         Default = Library.ShowCustomCursor,
         Callback = function(Value)
-            Library.ShowCustomCursor = Value
+            Library:SetGUIAppearanceValue("CustomCursor", Value)
         end,
     })
 
@@ -17494,17 +18007,17 @@ function Library:LoadSettingsTab(Window, SettingsInfo)
         Values = { "Left", "Right" },
         Default = Library.NotifySide,
         Callback = function(Value)
-            Library:SetNotifySide(Value)
+            Library:SetGUIAppearanceValue("NotificationSide", Value)
         end,
     })
 
     MenuGroup:AddDropdown("UISettingsDensity", {
         Text = "Control Density",
         Values = { "Comfortable", "Compact" },
-        Default = Library.UIDensity,
+        Default = GUIAppearance.Density,
         Tooltip = Library.IsMobile and "Compact shows more controls on a phone. Comfortable uses larger tap targets." or "Choose between spacious controls and a denser layout.",
         Callback = function(Value)
-            Library:SetUIDensity(Value)
+            Library:SetGUIAppearanceValue("Density", Value)
         end,
     })
 
@@ -17524,12 +18037,12 @@ function Library:LoadSettingsTab(Window, SettingsInfo)
     MenuGroup:AddDropdown("UISettingsDPIScale", {
         Text = "DPI Scale",
         Values = { "50%", "75%", "100%", "125%", "150%", "175%", "200%" },
-        Default = tostring(math.floor((Library.DPIScale or 1) * 100 + 0.5)) .. "%",
+        Default = tostring(GUIAppearance.UIScale) .. "%",
         Callback = function(Value)
             local System = tostring(Value):gsub("%%", "")
             local Scale = tonumber(System)
             if Scale then
-                Library:SetDPIScale(Scale)
+                Library:SetGUIAppearanceValue("UIScale", Scale)
             end
         end,
     })
@@ -17609,8 +18122,12 @@ function Library:LoadSettingsTab(Window, SettingsInfo)
             Window:SetCompact(false)
         end
         local DefaultDensity = Library.IsMobile and "Compact" or "Comfortable"
-        Library:SetUIDensity(DefaultDensity)
-        Library:SetDPIScale(100)
+        Library:SetGUIAppearanceValue("Density", DefaultDensity)
+        Library:SetGUIAppearanceValue("UIScale", 100)
+        Library:SetGUIAppearanceValue("SidebarMode", "Expanded")
+        Library:SetGUIAppearanceValue("WindowPosition", "Center")
+        Library:SetGUIAppearanceValue("WindowWidth", 720)
+        Library:SetGUIAppearanceValue("WindowHeight", 540)
         if Options.UISettingsDensity then
             Options.UISettingsDensity:SetValue(DefaultDensity)
         end
@@ -17631,28 +18148,28 @@ function Library:LoadSettingsTab(Window, SettingsInfo)
 
     WindowGroup:AddSlider("UISettingsCornerRadius", {
         Text = "Corner Radius",
-        Default = Library.CornerRadius,
+        Default = GUIAppearance.CornerRadius,
         Min = 0,
         Max = 20,
         Rounding = 0,
         Callback = function(Value)
-            Window:SetCornerRadius(Value)
+            Library:SetGUIAppearanceValue("CornerRadius", Value)
         end,
     })
 
     WindowGroup:AddToggle("UISettingsWindowGlow", {
         Text = "Window Glow",
-        Default = Library.Scheme.WindowGlow,
+        Default = GUIAppearance.Glow,
         Callback = function(Value)
-            Library:SetGlow(Value)
+            Library:SetGUIAppearanceValue("Glow", Value)
         end,
     })
 
     WindowGroup:AddToggle("UISettingsAnimatedGradient", {
         Text = "Animated Gradient",
-        Default = Library.Scheme.GradientEnabled,
+        Default = GUIAppearance.Gradient,
         Callback = function(Value)
-            Library:SetGradientAnimation(Value)
+            Library:SetGUIAppearanceValue("Gradient", Value)
         end,
     })
 
@@ -17939,6 +18456,49 @@ function Library:LoadSettingsTab(Window, SettingsInfo)
                 SaveManager:IgnoreThemeSettings()
                 SaveManager:SetIgnoreIndexes({
                     "MenuKeybind",
+                    "GUIAppearancePresetSlot",
+                    "GUIAppearanceImportText",
+                    "UISettingsDensity",
+                    "UISettingsDPIScale",
+                    "UISettingsCustomCursor",
+                    "UISettingsNotificationSide",
+                    "UISettingsCornerRadius",
+                    "UISettingsWindowGlow",
+                    "UISettingsAnimatedGradient",
+                    "GUIAppearanceWindowWidth",
+                    "GUIAppearanceWindowHeight",
+                    "GUIAppearanceWindowPosition",
+                    "GUIAppearanceWindowX",
+                    "GUIAppearanceWindowY",
+                    "GUIAppearanceSidebarWidth",
+                    "GUIAppearanceSidebarMode",
+                    "GUIAppearanceUIScale",
+                    "GUIAppearanceDensity",
+                    "GUIAppearanceRowScale",
+                    "GUIAppearanceTextScale",
+                    "GUIAppearanceCornerRadius",
+                    "GUIAppearanceWindowTransparency",
+                    "GUIAppearanceBackgroundImageOpacity",
+                    "GUIAppearanceMobileSidebarWidth",
+                    "GUIAppearanceMobileButtonSize",
+                    "GUIAppearanceMobileButtonRoundness",
+                    "GUIAppearanceMobileButtonsSide",
+                    "GUIAppearanceMobileButtonsVisible",
+                    "GUIAppearanceMobileButtonsDraggable",
+                    "GUIAppearanceFont",
+                    "GUIAppearanceBackgroundColor",
+                    "GUIAppearanceMainColor",
+                    "GUIAppearanceAccentColor",
+                    "GUIAppearanceOutlineColor",
+                    "GUIAppearanceFontColor",
+                    "GUIAppearanceGlow",
+                    "GUIAppearanceGradient",
+                    "GUIAppearanceToggleAnimations",
+                    "GUIAppearanceButtonGlow",
+                    "GUIAppearanceButtonGlowSize",
+                    "GUIAppearanceAnimationDuration",
+                    "GUIAppearanceCustomCursor",
+                    "GUIAppearanceNotificationSide",
                 })
                 SaveManager:SetFolder(SettingsInfo.ConfigFolder or "ZeroPoint")
                 SaveManager:SetSubFolder(SettingsInfo.ConfigSubFolder or ScriptName)
