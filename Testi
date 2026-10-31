@@ -276,6 +276,7 @@ local Library = {
     Tabs = {},
     TabButtons = {},
     DependencyBoxes = {},
+    DropdownVisibilityTargets = {},
     KeybindFrame = nil,
     KeybindContainer = nil,
     KeybindToggles = {},
@@ -771,7 +772,145 @@ local function GetTeams()
     end)
     return TeamList
 end
+local function NormalizeDropdownVisibilityValues(Values)
+    local Result = {}
+    if Values == nil then
+        return Result
+    end
+    if typeof(Values) ~= "table" then
+        Result[Values] = true
+        return Result
+    end
+    for Key, Value in Values do
+        if typeof(Key) == "number" then
+            Result[Value] = true
+        elseif Value == true then
+            Result[Key] = true
+        end
+    end
+    return Result
+end
+
+local function DropdownVisibilityMatches(Dropdown, Rule)
+    local Chosen = Dropdown.Value
+    local Multi = Dropdown.Multi == true
+    local Required = 0
+    local Matched = 0
+    for Value in Rule.Values do
+        Required += 1
+        local Selected = Multi and typeof(Chosen) == "table" and Chosen[Value] == true
+            or not Multi and Chosen == Value
+        if Selected then
+            Matched += 1
+        end
+    end
+    if Required == 0 then
+        return false
+    end
+    if Rule.Mode == "All" then
+        return Matched == Required
+    end
+    return Matched > 0
+end
+
+function Library:UpdateDropdownVisibility()
+    if self.Unloaded then
+        return
+    end
+    for Control in self.DropdownVisibilityTargets do
+        if not Control.Holder or not Control.Holder.Parent then
+            self.DropdownVisibilityTargets[Control] = nil
+            continue
+        end
+        local ShouldShow = Control._DropdownBaseVisible ~= false
+        if ShouldShow then
+            for Dropdown, Rules in Control._DropdownVisibilityRules do
+                local GroupMatches = false
+                for _, Rule in Rules do
+                    if DropdownVisibilityMatches(Dropdown, Rule) then
+                        GroupMatches = true
+                        break
+                    end
+                end
+                if not GroupMatches then
+                    ShouldShow = false
+                    break
+                end
+            end
+        end
+        if Control.Visible ~= ShouldShow then
+            Control._DropdownChangingVisibility = true
+            Control:SetVisible(ShouldShow)
+            Control._DropdownChangingVisibility = nil
+        end
+    end
+end
+
+function Library:BindDropdownVisibility(Dropdown, Controls, Values, Mode)
+    assert(typeof(Dropdown) == "table" and Dropdown.Type == "Dropdown", "Expected a dropdown or image dropdown")
+    assert(Values ~= nil, "At least one dropdown selection is required")
+    Mode = Mode or "Any"
+    assert(Mode == "Any" or Mode == "All", "Visibility mode must be Any or All")
+    local Targets
+    if typeof(Controls) == "table" and typeof(Controls.SetVisible) == "function" then
+        Targets = { Controls }
+    else
+        assert(typeof(Controls) == "table", "Expected a control or a list of controls")
+        Targets = Controls
+    end
+    local Rule = {
+        Dropdown = Dropdown,
+        Values = NormalizeDropdownVisibilityValues(Values),
+        Mode = Mode,
+        Targets = {},
+    }
+    for _, Control in Targets do
+        assert(typeof(Control) == "table" and typeof(Control.SetVisible) == "function", "Each target must support SetVisible")
+        if not Control._DropdownVisibilityRules then
+            Control._DropdownVisibilityRules = {}
+            Control._DropdownBaseVisible = Control.Visible ~= false
+            local OriginalSetVisible = Control.SetVisible
+            function Control:SetVisible(Visible)
+                if self._DropdownChangingVisibility then
+                    return OriginalSetVisible(self, Visible)
+                end
+                self._DropdownBaseVisible = Visible ~= false
+                Library:UpdateDropdownVisibility()
+            end
+        end
+        Control._DropdownVisibilityRules[Dropdown] = Control._DropdownVisibilityRules[Dropdown] or {}
+        table.insert(Control._DropdownVisibilityRules[Dropdown], Rule)
+        table.insert(Rule.Targets, Control)
+        self.DropdownVisibilityTargets[Control] = true
+    end
+    function Rule:Unbind()
+        if self.Unbound then
+            return
+        end
+        self.Unbound = true
+        for _, Control in self.Targets do
+            local Rules = Control._DropdownVisibilityRules and Control._DropdownVisibilityRules[self.Dropdown]
+            if Rules then
+                local Index = table.find(Rules, self)
+                if Index then
+                    table.remove(Rules, Index)
+                end
+                if #Rules == 0 then
+                    Control._DropdownVisibilityRules[self.Dropdown] = nil
+                end
+            end
+        end
+        Library:UpdateDropdownVisibility()
+    end
+    self:UpdateDropdownVisibility()
+    if self.Searching then
+        self:UpdateSearch(self.SearchText)
+    end
+    return Rule
+end
+
 function Library:UpdateDependencyBoxes()
+    Library:UpdateDropdownVisibility()
     for _, Depbox in Library.DependencyBoxes do
         Depbox:Update(true)
     end
@@ -1504,9 +1643,28 @@ function Library:RegisterFeature(Control, Groupbox, Idx)
         Control.LocalizationSetTextWrapped = true
     end
 
+    if typeof(Control.SetVisible) == "function" and typeof(Control.ShowWhenDropdown) ~= "function" then
+        function Control:ShowWhenDropdown(Dropdown, Values, Mode)
+            return Library:BindDropdownVisibility(Dropdown, self, Values, Mode)
+        end
+    end
+
     Library.FeatureRegistryById[Id] = Feature
     table.insert(Library.FeatureRegistry, Feature)
     Library:LocalizeFeature(Feature)
+
+    if typeof(Control.VisibleWhen) == "table" then
+        local Condition = Control.VisibleWhen
+        if Condition.Dropdown then
+            Control:ShowWhenDropdown(Condition.Dropdown, Condition.Values or Condition.Value, Condition.Mode)
+        else
+            for _, Rule in Condition do
+                if typeof(Rule) == "table" and Rule.Dropdown then
+                    Control:ShowWhenDropdown(Rule.Dropdown, Rule.Values or Rule.Value, Rule.Mode)
+                end
+            end
+        end
+    end
 
     if Library.FeatureSearchUI and Library.FeatureSearchUI.Visible and typeof(Library.FeatureSearchUI.Refresh) == "function" then
         Library.FeatureSearchUI:Refresh()
@@ -4883,7 +5041,8 @@ do
             Data.Text = Params.Text or ""
             Data.DoesWrap = Params.DoesWrap or false
             Data.Size = Params.Size or 14
-            Data.Visible = Params.Visible or true
+            Data.Visible = Params.Visible ~= false
+            Data.VisibleWhen = Params.VisibleWhen
             Data.Idx = typeof(Second) == "table" and First or nil
         else
             Data.Text = First or ""
@@ -4899,6 +5058,7 @@ do
             DoesWrap = Data.DoesWrap,
             Addons = Addons,
             Visible = Data.Visible,
+            VisibleWhen = Data.VisibleWhen,
             Type = "Label",
         }
         local TextLabel = New("TextLabel", {
@@ -5025,7 +5185,8 @@ do
                 Info.DisabledTooltip = Params.DisabledTooltip
                 Info.Risky = Params.Risky or false
                 Info.Disabled = Params.Disabled or false
-                Info.Visible = Params.Visible or true
+                Info.Visible = Params.Visible ~= false
+                Info.VisibleWhen = Params.VisibleWhen
                 Info.Idx = typeof(Second) == "table" and First or nil
             else
                 Info.Text = First or ""
@@ -5053,6 +5214,7 @@ do
             Risky = Info.Risky,
             Disabled = Library:GetDisabledState(Info.Disabled),
             Visible = Info.Visible,
+            VisibleWhen = Info.VisibleWhen,
             Tween = nil,
             Type = "Button",
         }
@@ -5405,6 +5567,7 @@ do
             Visible = Info.Visible,
             Addons = {},
             Variant = "Checkbox",
+            VisibleWhen = Info.VisibleWhen,
             Type = "Toggle",
             Animated = Info.Animated ~= false,
             VisualTweens = {},
@@ -5616,6 +5779,7 @@ do
             Visible = Info.Visible,
             Addons = {},
             Variant = "Switch",
+            VisibleWhen = Info.VisibleWhen,
             Type = "Toggle",
             Animated = Info.Animated ~= false,
             VisualTweens = {},
@@ -5839,6 +6003,7 @@ do
             VerifyValue = Info.VerifyValue,
             Disabled = Library:GetDisabledState(Info.Disabled),
             Visible = Info.Visible,
+            VisibleWhen = Info.VisibleWhen,
             Type = "Input",
         }
         local Holder = New("Frame", {
@@ -5991,6 +6156,7 @@ do
             Changed = Info.Changed,
             Disabled = Library:GetDisabledState(Info.Disabled),
             Visible = Info.Visible,
+            VisibleWhen = Info.VisibleWhen,
             Type = "Slider",
         }
         local Holder = New("Frame", {
@@ -6280,8 +6446,19 @@ do
             Changed = Info.Changed,
             Disabled = Library:GetDisabledState(Info.Disabled),
             Visible = Info.Visible,
+            VisibleWhen = Info.VisibleWhen,
             Type = "Dropdown",
         }
+        function Dropdown:BindVisibility(ValuesOrMap, Controls, Mode)
+            if Controls == nil and typeof(ValuesOrMap) == "table" then
+                local Bindings = {}
+                for Value, Targets in ValuesOrMap do
+                    table.insert(Bindings, Library:BindDropdownVisibility(self, Targets, Value, Mode))
+                end
+                return Bindings
+            end
+            return Library:BindDropdownVisibility(self, Controls, ValuesOrMap, Mode)
+        end
         local DropdownShortHeight = Dropdown.ImageOnly and (Library.IsMobile and 60 or 72)
             or (Library.IsMobile and 24 or 32)
         local DropdownTallHeight = Dropdown.ImageOnly and (DropdownShortHeight + (Library.IsMobile and 24 or 26))
@@ -7059,12 +7236,12 @@ do
             for _, Button in Buttons do
                 Button:UpdateButton()
             end
+            Library:UpdateDependencyBoxes()
             if not Dropdown.Disabled or Force then
                 local FinalCallbackValue = CallbackValue
                 if CallbackValue == nil then
                     FinalCallbackValue = Dropdown:GetCallbackValue()
                 end
-                Library:UpdateDependencyBoxes()
                 Library:SafeCallback(Dropdown.Callback, FinalCallbackValue)
                 Library:SafeCallback(Dropdown.Changed, FinalCallbackValue)
             end
@@ -7072,6 +7249,7 @@ do
         function Dropdown:SetValues(Values)
             Dropdown.Values = Values
             Dropdown:BuildDropdownList()
+            Library:UpdateDropdownVisibility()
         end
         function Dropdown:AddValues(Values)
             if typeof(Values) == "table" then
