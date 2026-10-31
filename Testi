@@ -544,6 +544,13 @@ local Templates = {
         Values = {},
         DisabledValues = {},
         Multi = false,
+        ImageOnly = false,
+        ImageColumns = 3,
+        ImageMobileColumns = 2,
+        ImageTileHeight = 88,
+        ImageVisibleRows = 3,
+        ImageScaleType = Enum.ScaleType.Crop,
+        ImagePreviewScaleType = Enum.ScaleType.Fit,
         MaxVisibleDropdownItems = 8,
         Callback = function() end,
         Changed = function() end,
@@ -6259,8 +6266,9 @@ do
             Value = Info.Multi and {} or nil,
             Values = Info.Values,
             DisabledValues = Info.DisabledValues,
-            ValueImages = Info.ValueImages,
+            ValueImages = Info.ValueImages or Info.Images or {},
             Multi = Info.Multi,
+            ImageOnly = Info.ImageOnly == true,
             SpecialType = Info.SpecialType,
             ExcludeLocalPlayer = Info.ExcludeLocalPlayer,
             EnablePlayerImages = Info.EnablePlayerImages,
@@ -6274,8 +6282,10 @@ do
             Visible = Info.Visible,
             Type = "Dropdown",
         }
-        local DropdownTallHeight = Library.IsMobile and 49 or 58
-        local DropdownShortHeight = Library.IsMobile and 24 or 32
+        local DropdownShortHeight = Dropdown.ImageOnly and (Library.IsMobile and 60 or 72)
+            or (Library.IsMobile and 24 or 32)
+        local DropdownTallHeight = Dropdown.ImageOnly and (DropdownShortHeight + (Library.IsMobile and 24 or 26))
+            or (Library.IsMobile and 49 or 58)
         local Holder = New("Frame", {
             BackgroundTransparency = 1,
             Size = UDim2.new(1, 0, 0, Dropdown.Text and DropdownTallHeight or DropdownShortHeight),
@@ -6320,11 +6330,12 @@ do
         }))
         local DisplayImage = New("ImageLabel", {
             BackgroundTransparency = 1,
-            Position = UDim2.fromOffset(-4, 8),
-            Size = UDim2.fromOffset(16, 16),
+            Position = Dropdown.ImageOnly and UDim2.fromOffset(0, 4) or UDim2.fromOffset(-4, 8),
+            Size = Dropdown.ImageOnly and UDim2.new(1, -28, 1, -8) or UDim2.fromOffset(16, 16),
+            ScaleType = Dropdown.ImageOnly and Info.ImagePreviewScaleType or Enum.ScaleType.Fit,
             Image = "",
             ImageTransparency = 1,
-            ZIndex = 2,
+            ZIndex = Dropdown.ImageOnly and 3 or 2,
             Parent = DisplayContainer,
         })
         if Dropdown.SpecialType == "Player" and Dropdown.EnablePlayerImages then
@@ -6364,6 +6375,7 @@ do
                 TextSize = 14,
                 TextXAlignment = Enum.TextXAlignment.Left,
                 Visible = false,
+                ZIndex = 4,
                 Parent = DisplayButton,
             })
             New("UIPadding", {
@@ -6381,17 +6393,51 @@ do
             local DisplayName = Value.DisplayName ~= "" and Value.DisplayName or Value.Name
             return DisplayName, "@" .. Value.Name
         end
-        local GetValueImage = function(Value)
-            if not Value then
+        local ImageCache = {}
+        local function ResolveValueImage(Source)
+            if Source == nil then
                 return nil
             end
-            local ValueImage = nil
-            if IsPlayerValue(Value) and Dropdown.EnablePlayerImages == true then
-                ValueImage = { Url = string.format("rbxthumb://type=AvatarHeadShot&id=%s&w=150&h=150", tostring(Value.UserId)) }
-            elseif Info.ValueImages and Info.ValueImages[Value] then
-                ValueImage = Library:GetCustomIcon(Info.ValueImages[Value])
+            if typeof(Source) == "table" then
+                if Source.Url and not Source.Image then
+                    if typeof(Source.Url) == "string" and Source.Url:match("^https?://") then
+                        Source = Source.Url
+                    else
+                        return Source
+                    end
+                else
+                    Source = Source.Image or Source.AssetId or Source.Id
+                end
             end
-            return ValueImage
+            if Source == nil then
+                return nil
+            end
+            local Cached = ImageCache[Source]
+            if Cached ~= nil then
+                return Cached or nil
+            end
+            local Result
+            if typeof(Source) == "number" or typeof(Source) == "string" then
+                if typeof(Source) == "string" and Source:match("^https?://") then
+                    local Success, Resolved = pcall(Library.GetCustomImage, Library, Source)
+                    if Success and typeof(Resolved) == "table" then
+                        Result = Resolved
+                    end
+                else
+                    Result = Library:GetCustomIcon(Source)
+                end
+            end
+            ImageCache[Source] = Result or false
+            return Result
+        end
+        local GetValueImage = function(Value)
+            if Value == nil then
+                return nil
+            end
+            if IsPlayerValue(Value) and Dropdown.EnablePlayerImages == true then
+                return { Url = string.format("rbxthumb://type=AvatarHeadShot&id=%s&w=150&h=150", tostring(Value.UserId)) }
+            end
+            return ResolveValueImage(Dropdown.ValueImages and Dropdown.ValueImages[Value])
         end
         local MenuTable = Library:AddContextMenu(
             DisplayContainer,
@@ -6404,6 +6450,9 @@ do
             2,
             function(Active: boolean)
                 DisplayButton.TextTransparency = (Active and SearchBox) and 1 or 0
+                if Dropdown.ImageOnly then
+                    DisplayImage.Visible = not (Active and SearchBox) and DisplayImage.Image ~= ""
+                end
                 ArrowImage.ImageTransparency = Active and 0 or 0.5
                 ArrowImage.Rotation = Active and 180 or 0
                 if SearchBox then
@@ -6413,33 +6462,29 @@ do
             end
         )
         Dropdown.Menu = MenuTable
-       	function Dropdown:RecalculateListSize(Count)
-			local ItemCount =
-				Count or GetTableSize(Dropdown.Values)
-            local ItemHeight = (Dropdown.SpecialType == "Player" and Dropdown.EnablePlayerImages) and (Library.IsMobile and 35 or 46) or (Library.IsMobile and 30 or 27)
-
-			local ItemsHeight = math.clamp(
-				ItemCount * ItemHeight,
-				0,
-				Info.MaxVisibleDropdownItems * ItemHeight
-			)
-
-
-			local MultiButtonHeight = Info.Multi and 29 or 0
-			local Y = ItemsHeight + MultiButtonHeight
+        function Dropdown:RecalculateListSize(Count)
+            local ItemCount = Count or #Dropdown.Values
+            local ItemsHeight
+            if Dropdown.ImageOnly then
+                local Columns = math.max(1, math.floor(Library.IsMobile and Info.ImageMobileColumns or Info.ImageColumns))
+                local Rows = math.ceil(ItemCount / Columns)
+                local VisibleRows = math.min(Rows, math.max(1, Info.ImageVisibleRows))
+                ItemsHeight = VisibleRows > 0 and (VisibleRows * Info.ImageTileHeight + (VisibleRows + 1) * 5) or 0
+            else
+                local ItemHeight = (Dropdown.SpecialType == "Player" and Dropdown.EnablePlayerImages)
+                    and (Library.IsMobile and 35 or 46) or (Library.IsMobile and 30 or 27)
+                ItemsHeight = math.clamp(ItemCount * ItemHeight, 0, Info.MaxVisibleDropdownItems * ItemHeight)
+            end
+            local Y = ItemsHeight + (Info.Multi and 29 or 0)
             if Library.IsMobile then
                 local Camera = workspace.CurrentCamera
                 local ViewportHeight = Camera and Camera.ViewportSize.Y or 480
                 Y = math.min(Y, math.max(100, (ViewportHeight - 30) / math.max(Library.DPIScale, 0.5)))
             end
-
-			MenuTable:SetSize(function()
-				return UDim2.fromOffset(
-					(DisplayContainer.AbsoluteSize.X / Library.DPIScale) + 1,
-					Y
-				)
-			end)
-		end
+            MenuTable:SetSize(function()
+                return UDim2.fromOffset((DisplayContainer.AbsoluteSize.X / Library.DPIScale) + 1, Y)
+            end)
+        end
         function Dropdown:UpdateColors()
             if Library.Unloaded then
                 return
@@ -6476,28 +6521,39 @@ do
                     Str = tostring(Info.FormatDisplayValue(Str))
                 end
             end
-            local MaxWidth = DisplayButton.AbsoluteSize.X - 28
-            local TextWidth = Library:GetTextBounds(Str, Library.Scheme.Font, 14, math.huge)
-            if TextWidth > MaxWidth then
-                local Base = Str
-                repeat
-                    Base = Base:sub(1, #Base - 1)
-                    Str = Base .. "..."
-                    TextWidth = Library:GetTextBounds(Str, Library.Scheme.Font, 14, math.huge)
-                until TextWidth <= MaxWidth or #Base <= 0
+            if Dropdown.ImageOnly then
+                DisplayButton.Text = ValueImage and "" or (Str == "" and "Select image" or Str)
+            else
+                local MaxWidth = DisplayButton.AbsoluteSize.X - 28
+                local TextWidth = Library:GetTextBounds(Str, Library.Scheme.Font, 14, math.huge)
+                if TextWidth > MaxWidth then
+                    local Base = Str
+                    repeat
+                        Base = Base:sub(1, #Base - 1)
+                        Str = Base .. "..."
+                        TextWidth = Library:GetTextBounds(Str, Library.Scheme.Font, 14, math.huge)
+                    until TextWidth <= MaxWidth or #Base <= 0
+                end
+                DisplayButton.Text = (Str == "" and "---" or Str)
             end
-            DisplayButton.Text = (Str == "" and "---" or Str)
             if ValueImage then
                 DisplayImage.Image = ValueImage.Url
                 DisplayImage.ImageRectOffset = ValueImage.ImageRectOffset or Vector2.zero
                 DisplayImage.ImageRectSize = ValueImage.ImageRectSize or Vector2.zero
-                DisplayImage.ImageTransparency = 0
+                DisplayImage.ImageTransparency = Dropdown.Disabled and 0.8 or 0
+                DisplayImage.Visible = not (Dropdown.ImageOnly and MenuTable.Active and SearchBox)
             else
                 DisplayImage.Image = ""
                 DisplayImage.ImageTransparency = 1
+                DisplayImage.Visible = false
             end
-            DisplayButton.Size = ValueImage and UDim2.new(1, -8, 0, 32) or UDim2.new(1, 0, 0, 32)
-            DisplayButton.Position = ValueImage and UDim2.fromOffset(14, 0) or UDim2.fromOffset(0, 0)
+            if Dropdown.ImageOnly then
+                DisplayButton.Size = UDim2.new(1, 0, 1, 0)
+                DisplayButton.Position = UDim2.fromOffset(0, 0)
+            else
+                DisplayButton.Size = ValueImage and UDim2.new(1, -8, 0, 32) or UDim2.new(1, 0, 0, 32)
+                DisplayButton.Position = ValueImage and UDim2.fromOffset(14, 0) or UDim2.fromOffset(0, 0)
+            end
         end
         function Dropdown:OnChanged(Func)
             Dropdown.Changed = Func
@@ -6639,6 +6695,8 @@ do
         local MultiControlsCreated = false
         local MultiPadding
         local MultiButtonHolder
+        local ImageGridHolder
+        local ImageTileTooltips = {}
         function Dropdown:BuildDropdownList()
             local Values = Dropdown.Values
             local DisabledValues = Dropdown.DisabledValues
@@ -6663,6 +6721,143 @@ do
                 end)
             end
             MenuTable.Menu.UIListLayout.Padding = UDim.new(0, Info.Multi and 4 or 0)
+            if Dropdown.ImageOnly then
+                for _, Tooltip in ImageTileTooltips do
+                    Tooltip:Destroy()
+                    local TooltipIndex = table.find(Tooltips, Tooltip)
+                    if TooltipIndex then
+                        table.remove(Tooltips, TooltipIndex)
+                    end
+                end
+                table.clear(ImageTileTooltips)
+                if ImageGridHolder then
+                    for _, Descendant in ImageGridHolder:GetDescendants() do
+                        Library:RemoveFromRegistry(Descendant)
+                    end
+                    Library:RemoveFromRegistry(ImageGridHolder)
+                    ImageGridHolder:Destroy()
+                    ImageGridHolder = nil
+                end
+                local Columns = math.max(1, math.floor(Library.IsMobile and Info.ImageMobileColumns or Info.ImageColumns))
+                local TileHeight = math.max(44, Info.ImageTileHeight)
+                local Gap = 5
+                local Count = 0
+                local ValuesToRender = {}
+                for _, Value in Dropdown.Values do
+                    local SearchValue = tostring(Info.FormatListValue and Info.FormatListValue(Value) or Value)
+                    if not SearchBox or SearchValue:lower():find(SearchBox.Text:lower(), 1, true) then
+                        table.insert(ValuesToRender, Value)
+                    end
+                end
+                local Rows = math.ceil(#ValuesToRender / Columns)
+                ImageGridHolder = New("Frame", {
+                    BackgroundTransparency = 1,
+                    LayoutOrder = 2,
+                    Size = UDim2.new(1, 0, 0, Rows > 0 and Rows * TileHeight + (Rows + 1) * Gap or 0),
+                    Parent = MenuTable.Menu,
+                })
+                New("UIPadding", {
+                    PaddingLeft = UDim.new(0, Gap),
+                    PaddingRight = UDim.new(0, Gap + 4),
+                    PaddingTop = UDim.new(0, Gap),
+                    Parent = ImageGridHolder,
+                })
+                New("UIGridLayout", {
+                    CellPadding = UDim2.fromOffset(Gap, Gap),
+                    CellSize = UDim2.new(1 / Columns, -Gap * (Columns - 1) / Columns, 0, TileHeight),
+                    SortOrder = Enum.SortOrder.LayoutOrder,
+                    Parent = ImageGridHolder,
+                })
+                for Index, Value in ValuesToRender do
+                    Count += 1
+                    local IsDisabled = table.find(Dropdown.DisabledValues, Value) ~= nil
+                    local ValueImage = GetValueImage(Value)
+                    local Tile = New("TextButton", {
+                        BackgroundColor3 = "MainColor",
+                        BackgroundTransparency = 0.2,
+                        Text = "",
+                        AutoButtonColor = false,
+                        LayoutOrder = Index,
+                        Parent = ImageGridHolder,
+                    })
+                    New("UICorner", {
+                        CornerRadius = UDim.new(0, math.min(Library.CornerRadius, 8)),
+                        Parent = Tile,
+                    })
+                    local Outline = New("UIStroke", {
+                        Color = "OutlineColor",
+                        Thickness = 1,
+                        Parent = Tile,
+                    })
+                    if ValueImage then
+                        New("ImageLabel", {
+                            BackgroundTransparency = 1,
+                            Image = ValueImage.Url,
+                            ImageRectOffset = ValueImage.ImageRectOffset or Vector2.zero,
+                            ImageRectSize = ValueImage.ImageRectSize or Vector2.zero,
+                            ImageTransparency = IsDisabled and 0.75 or 0,
+                            ScaleType = Info.ImageScaleType,
+                            Position = UDim2.fromOffset(4, 4),
+                            Size = UDim2.new(1, -8, 1, -8),
+                            Parent = Tile,
+                        })
+                    else
+                        New("TextLabel", {
+                            BackgroundTransparency = 1,
+                            Text = "?",
+                            TextSize = 20,
+                            TextTransparency = 0.6,
+                            Size = UDim2.fromScale(1, 1),
+                            Parent = Tile,
+                        })
+                    end
+                    table.insert(ImageTileTooltips, Library:AddTooltip(
+                        tostring(Info.FormatListValue and Info.FormatListValue(Value) or Value), nil, Tile
+                    ))
+                    local Row = {}
+                    function Row:UpdateButton()
+                        local Selected = Info.Multi and Dropdown.Value[Value] or Dropdown.Value == Value
+                        local Scheme = Selected and "AccentColor" or "OutlineColor"
+                        Outline.Color = Library.Scheme[Scheme]
+                        if Library.Registry[Outline] then
+                            Library.Registry[Outline].Color = Scheme
+                        end
+                        Outline.Thickness = Selected and 2 or 1
+                        Tile.BackgroundTransparency = Selected and 0 or 0.2
+                        Tile.Active = not IsDisabled and not Dropdown.Disabled
+                    end
+                    Tile.MouseButton1Click:Connect(function()
+                        if IsDisabled or Dropdown.Disabled then
+                            return
+                        end
+                        local Selected = Info.Multi and Dropdown.Value[Value] or Dropdown.Value == Value
+                        local Try = not Selected
+                        local ActiveValues = Dropdown:GetActiveValues()
+                        local ActiveCount = Info.Multi and #ActiveValues or ActiveValues
+                        if not (ActiveCount == 1 and not Try and not Info.AllowNull) then
+                            if Info.Multi then
+                                Dropdown.Value[Value] = Try and true or nil
+                            else
+                                Dropdown.Value = Try and Value or nil
+                            end
+                        end
+                        for _, OtherRow in Buttons do
+                            OtherRow:UpdateButton()
+                        end
+                        Dropdown:Display()
+                        Library:UpdateDependencyBoxes()
+                        Library:SafeCallback(Dropdown.Callback, Dropdown:GetCallbackValue())
+                        Library:SafeCallback(Dropdown.Changed, Dropdown:GetCallbackValue())
+                        if not Info.Multi then
+                            MenuTable:Close()
+                        end
+                    end)
+                    Row:UpdateButton()
+                    Buttons[Tile] = Row
+                end
+                Dropdown:RecalculateListSize(Count)
+                return
+            end
             local ButtonHolder
             if Info.Multi then
                 if not MultiPadding or not MultiPadding.Parent then
@@ -6911,16 +7106,21 @@ do
                 return
             end
             Dropdown.ValueImages = ValueImages
+            table.clear(ImageCache)
             Dropdown:BuildDropdownList()
+            Dropdown:Display()
         end
         function Dropdown:AddValueImages(ValueImages)
             if typeof(ValueImages) ~= "table" then
                 return
             end
+            Dropdown.ValueImages = Dropdown.ValueImages or {}
             for key, val in ValueImages do
                 Dropdown.ValueImages[key] = val
             end
+            table.clear(ImageCache)
             Dropdown:BuildDropdownList()
+            Dropdown:Display()
         end
         function Dropdown:SetDisabled(Disabled: boolean)
             local ShouldDisable = Disabled == true
@@ -6958,6 +7158,11 @@ do
             MenuTable:Close()
             DisplayButton.Active = not Dropdown.Disabled
             Dropdown:UpdateColors()
+            if Dropdown.ImageOnly then
+                for _, Row in Buttons do
+                    Row:UpdateButton()
+                end
+            end
         end
         function Dropdown:SetVisible(Visible: boolean)
             Dropdown.Visible = Visible
@@ -6970,7 +7175,7 @@ do
             Label.Text = HasLabel and Text or ""
             Label.Visible = HasLabel
             local ComfortableHeight = HasLabel and DropdownTallHeight or DropdownShortHeight
-            local CompactHeight = HasLabel and (Library.IsMobile and 42 or 54) or DropdownShortHeight
+            local CompactHeight = HasLabel and (Dropdown.ImageOnly and DropdownTallHeight or (Library.IsMobile and 42 or 54)) or DropdownShortHeight
             DensityEntry.Comfortable = ComfortableHeight
             DensityEntry.Compact = CompactHeight
             local Height = Library.UIDensity == "Compact" and CompactHeight or ComfortableHeight
@@ -7044,6 +7249,16 @@ do
 		end
 
         return Dropdown
+    end
+    function Funcs:AddImageDropdown(Idx, Info)
+        assert(typeof(Info) == "table", "AddImageDropdown expects an options table")
+        local Settings = {}
+        for Key, Value in Info do
+            Settings[Key] = Value
+        end
+        Settings.ImageOnly = true
+        Settings.ValueImages = Settings.ValueImages or Settings.Images or {}
+        return self:AddDropdown(Idx, Settings)
     end
     function Funcs:AddViewport(Idx, Info)
         Info = Library:Validate(Info, Templates.Viewport)
