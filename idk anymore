@@ -12502,6 +12502,28 @@ function Library:CreateWindow(WindowInfo)
         or math.clamp(math.floor(WindowInfo.Size.X.Offset * 0.265 + 0.5), 170, 210)
     local IsCompact = WindowInfo.SidebarCompacted
     local LastExpandedWidth = InitialLeftWidth
+    local function NormalizeMobileSidebarButton(Button)
+        if not Library.IsMobile or not Button then
+            return
+        end
+        local Label = Button.Label
+        if Label and Label.Parent then
+            Label.TextScaled = false
+            Label.TextSize = 14
+            Label.TextWrapped = false
+            Label.TextTruncate = Enum.TextTruncate.AtEnd
+            Label.Position = UDim2.fromOffset(30, 0)
+            Label.Size = UDim2.new(1, -30, 1, 0)
+        end
+        local Icon = Button.Icon
+        if Icon and Icon.Parent then
+            Icon.AnchorPoint = Vector2.new(0, 0.5)
+            Icon.Position = UDim2.new(0, 0, 0.5, 0)
+            Icon.SizeConstraint = Enum.SizeConstraint.RelativeXY
+            Icon.Size = UDim2.fromOffset(20, 20)
+            Icon.ScaleType = Enum.ScaleType.Fit
+        end
+    end
     do
         Library.KeybindFrame, Library.KeybindContainer = Library:AddDraggableMenu("Keybinds")
         Library.KeybindFrame.AnchorPoint = Vector2.new(0, 0.5)
@@ -13464,6 +13486,7 @@ function Library:CreateWindow(WindowInfo)
             Button.Padding.PaddingRight = UDim.new(0, IsCompact and 9 or 12)
             Button.Padding.PaddingTop = UDim.new(0, IsCompact and 9 or 10)
             Button.Icon.SizeConstraint = IsCompact and Enum.SizeConstraint.RelativeXY or Enum.SizeConstraint.RelativeYY
+            NormalizeMobileSidebarButton(Button)
         end
     end
     function Window:IsSidebarCompacted()
@@ -13639,11 +13662,13 @@ function Library:CreateWindow(WindowInfo)
                     Parent = TabButton,
                 })
             end
-            table.insert(Library.TabButtons, {
+            local SidebarButtonInfo = {
                 Label = TabLabel,
                 Padding = ButtonPadding,
                 Icon = TabIcon,
-            })
+            }
+            table.insert(Library.TabButtons, SidebarButtonInfo)
+            NormalizeMobileSidebarButton(SidebarButtonInfo)
             TabContainer = New("Frame", {
                 BackgroundTransparency = 1,
                 Size = UDim2.fromScale(1, 1),
@@ -15146,11 +15171,13 @@ function Library:CreateWindow(WindowInfo)
                     Parent = TabButton,
                 })
             end
-            table.insert(Library.TabButtons, {
+            local SidebarButtonInfo = {
                 Label = TabLabel,
                 Padding = ButtonPadding,
                 Icon = TabIcon,
-            })
+            }
+            table.insert(Library.TabButtons, SidebarButtonInfo)
+            NormalizeMobileSidebarButton(SidebarButtonInfo)
             TabContainer = New("ScrollingFrame", {
                 AutomaticCanvasSize = Enum.AutomaticSize.Y,
                 BackgroundTransparency = 1,
@@ -15896,11 +15923,13 @@ function Library:CreateWindow(WindowInfo)
                     Parent = TabButton,
                 })
             end
-            table.insert(Library.TabButtons, {
+            local SidebarButtonInfo = {
                 Label = TabLabel,
                 Padding = ButtonPadding,
                 Icon = TabIcon,
-            })
+            }
+            table.insert(Library.TabButtons, SidebarButtonInfo)
+            NormalizeMobileSidebarButton(SidebarButtonInfo)
             TabContainer = New("ScrollingFrame", {
                 AutomaticCanvasSize = Enum.AutomaticSize.Y,
                 BackgroundTransparency = 1,
