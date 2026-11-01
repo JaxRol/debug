@@ -329,6 +329,8 @@ local Library = {
     OriginalMinSize = Vector2.new(480, 360),
     MinSize = Vector2.new(480, 360),
     DPIScale = 1,
+    MobileAutoScale = true,
+    MobileWindowSizeOverride = false,
     VisualStyle = "Default",
     WindowSizePreset = "Standard",
     CornerRadius = 10,
@@ -1892,23 +1894,65 @@ function Library:SetThemePreset(Name)
     return true
 end
 
-function Library:SetDPIScale(DPIScale: number)
-    Library.DPIScale = DPIScale / 100
-    Library.MinSize = Library.OriginalMinSize * Library.DPIScale
-    for _, UIScale in Library.Scales do
-        UIScale.Scale = Library.DPIScale
+function Library:ApplyDPIScale(Scale: number)
+    Scale = math.clamp(tonumber(Scale) or 1, 0.5, 2)
+    self.MinSize = self.IsMobile and self.OriginalMinSize or self.OriginalMinSize * Scale
+    if self._AppliedScaleCount == #self.Scales and math.abs(self.DPIScale - Scale) < 0.0001 then
+        return
+    end
+    self.DPIScale = Scale
+    self._AppliedScaleCount = #self.Scales
+    for _, UIScale in self.Scales do
+        if UIScale and UIScale.Parent then
+            UIScale.Scale = Scale
+        end
     end
     for _, Option in Options do
         if Option.Type == "Dropdown" then
             Option:RecalculateListSize()
         end
     end
-    for _, Notification in Library.Notifications do
+    for _, Notification in self.Notifications do
         Notification:Resize()
     end
-    if Library.IsMobile and Library.Window and Library.Window.RefreshMobileLayout then
-        Library.Window:RefreshMobileLayout(true)
+end
+function Library:GetMobileResponsiveScale(Viewport: Vector2): number
+    if not self.IsMobile or not self.MobileAutoScale then
+        return self.DPIScale
     end
+    local WidthFactor = math.max(0.1, Viewport.X / 850)
+    local HeightFactor = math.max(0.1, Viewport.Y / 480)
+    return math.clamp(math.sqrt(math.min(WidthFactor, HeightFactor)), 0.8, 1.35)
+end
+function Library:GetMobileLayoutMetrics(Viewport: Vector2)
+    local Scale = self:GetMobileResponsiveScale(Viewport)
+    local HorizontalMargin = math.clamp(Viewport.X * 0.05, 8, 28)
+    local VerticalMargin = math.clamp(Viewport.Y * 0.06, 8, 30)
+    local AvailableWidth = math.max(1, math.floor((Viewport.X - HorizontalMargin * 2) / Scale))
+    local AvailableHeight = math.max(1, math.floor((Viewport.Y - VerticalMargin * 2) / Scale))
+    local Preferred = self.MobilePreferredWindowSize or Vector2.new(600, 520)
+    local Width = self.MobileWindowSizeOverride and math.min(Preferred.X, AvailableWidth) or AvailableWidth
+    local Height = self.MobileWindowSizeOverride and math.min(Preferred.Y, AvailableHeight) or AvailableHeight
+    return Scale, math.max(1, math.floor(Width)), math.max(1, math.floor(Height)), AvailableWidth, AvailableHeight
+end
+function Library:SetDPIScale(DPIScale: number)
+    if self.IsMobile then
+        self.MobileAutoScale = false
+    end
+    self:ApplyDPIScale((tonumber(DPIScale) or 100) / 100)
+    if self.IsMobile and self.Window and self.Window.RefreshMobileLayout then
+        self.Window:RefreshMobileLayout(true)
+    end
+end
+function Library:SetMobileAutoScale(Enabled: boolean)
+    if not self.IsMobile then
+        return false
+    end
+    self.MobileAutoScale = Enabled == true
+    if self.Window and self.Window.RefreshMobileLayout then
+        self.Window:RefreshMobileLayout(true)
+    end
+    return self.MobileAutoScale
 end
 function Library:GiveSignal(Connection: RBXScriptConnection | RBXScriptSignal)
     local ConnectionType = typeof(Connection)
@@ -3082,11 +3126,12 @@ function Library:MakeResizable(UI: GuiObject, DragFrame: GuiObject, Callback: ()
         end
         if Dragging and IsHoverInput(Input) then
             local Delta = Input.Position - StartPos
+            local Scale = Library.IsMobile and math.max(0.5, Library.DPIScale) or 1
             UI.Size = UDim2.new(
                 FrameSize.X.Scale,
-                math.clamp(FrameSize.X.Offset + Delta.X, Library.MinSize.X, math.huge),
+                math.clamp(FrameSize.X.Offset + Delta.X / Scale, Library.MinSize.X, math.huge),
                 FrameSize.Y.Scale,
-                math.clamp(FrameSize.Y.Offset + Delta.Y, Library.MinSize.Y, math.huge)
+                math.clamp(FrameSize.Y.Offset + Delta.Y / Scale, Library.MinSize.Y, math.huge)
             )
             if Callback then
                 Library:SafeCallback(Callback)
@@ -12428,17 +12473,15 @@ function Library:CreateWindow(WindowInfo)
 
     if Library.IsMobile then
         Library.MobilePreferredWindowSize = Vector2.new(WindowInfo.Size.X.Offset, WindowInfo.Size.Y.Offset)
-        local MobileScale = math.max(0.5, tonumber(Library.DPIScale) or 1)
-        local MobileWidth = math.max(1, math.floor(ViewportSize.X * 0.86 / MobileScale))
-        local MobileHeight = math.max(1, math.floor(ViewportSize.Y * 0.82 / MobileScale))
-        WindowInfo.Size = UDim2.fromOffset(
-            math.min(WindowInfo.Size.X.Offset, MobileWidth),
-            math.min(WindowInfo.Size.Y.Offset, MobileHeight)
-        )
-        Library.OriginalMinSize = Vector2.new(math.min(320, MobileWidth), math.min(220, MobileHeight))
+        Library.MobileWindowSizeOverride = false
+        Library.WindowSizePreset = "Auto (Mobile)"
+        local Scale, Width, Height, AvailableWidth, AvailableHeight = Library:GetMobileLayoutMetrics(ViewportSize)
+        Library:ApplyDPIScale(Scale)
+        WindowInfo.Size = UDim2.fromOffset(Width, Height)
+        Library.OriginalMinSize = Vector2.new(math.min(320, AvailableWidth), math.min(220, AvailableHeight))
     end
-    local MaxX = math.max(1, ViewportSize.X - 64)
-    local MaxY = math.max(1, ViewportSize.Y - 64)
+    local MaxX = Library.IsMobile and math.max(1, math.floor(ViewportSize.X / Library.DPIScale)) or math.max(1, ViewportSize.X - 64)
+    local MaxY = Library.IsMobile and math.max(1, math.floor(ViewportSize.Y / Library.DPIScale)) or math.max(1, ViewportSize.Y - 64)
     Library.OriginalMinSize =
         Vector2.new(math.min(Library.OriginalMinSize.X, MaxX), math.min(Library.OriginalMinSize.Y, MaxY))
     Library.MinSize = Library.OriginalMinSize
@@ -12584,7 +12627,7 @@ function Library:CreateWindow(WindowInfo)
             })
         )
         local MainFrameScale = New("UIScale", {
-            Scale = 1,
+            Scale = Library.DPIScale,
             Parent = MainFrame,
         })
         table.insert(Library.Scales, MainFrameScale)
@@ -13149,7 +13192,9 @@ function Library:CreateWindow(WindowInfo)
             })
             Library:MakeResizable(MainFrame, ResizeButton, function()
                 if Library.IsMobile and Library.Window and Library.Window.RefreshMobileLayout then
+                    Library.MobileWindowSizeOverride = true
                     Library.MobilePreferredWindowSize = Vector2.new(MainFrame.Size.X.Offset, MainFrame.Size.Y.Offset)
+                    Library.WindowSizePreset = "Custom"
                     Library.Window:RefreshMobileLayout(false)
                 end
                 for _, Tab in Library.Tabs do
@@ -13428,11 +13473,18 @@ function Library:CreateWindow(WindowInfo)
         end
     end
     function Window:SetWindowSize(Preset: string)
+        if Library.IsMobile and Preset == "Auto (Mobile)" then
+            Library.MobileWindowSizeOverride = false
+            Library.WindowSizePreset = Preset
+            Window:RefreshMobileLayout(true)
+            return true
+        end
         local Desired = Library.WindowSizePresets[Preset]
         if not Desired then
             return false
         end
         if Library.IsMobile then
+            Library.MobileWindowSizeOverride = true
             Library.MobilePreferredWindowSize = Desired
             Library.WindowSizePreset = Preset
             Window:RefreshMobileLayout(true)
@@ -13536,14 +13588,9 @@ function Library:CreateWindow(WindowInfo)
         if Viewport.X < 10 or Viewport.Y < 10 then
             return
         end
-        local Scale = math.max(0.5, tonumber(Library.DPIScale) or 1)
-        local AvailableWidth = math.max(1, math.floor(math.min(Viewport.X - 24, Viewport.X * 0.86) / Scale))
-        local AvailableHeight = math.max(1, math.floor(math.min(Viewport.Y - 24, Viewport.Y * 0.82) / Scale))
-        local Preferred = Library.MobilePreferredWindowSize or Vector2.new(600, 520)
-        local Width = math.min(Preferred.X, AvailableWidth)
-        local Height = math.min(Preferred.Y, AvailableHeight)
+        local Scale, Width, Height, AvailableWidth, AvailableHeight = Library:GetMobileLayoutMetrics(Viewport)
         Library.OriginalMinSize = Vector2.new(math.min(320, AvailableWidth), math.min(220, AvailableHeight))
-        Library.MinSize = Library.OriginalMinSize
+        Library:ApplyDPIScale(Scale)
         if MainFrame.Size.X.Offset ~= Width or MainFrame.Size.Y.Offset ~= Height then
             MainFrame.Size = UDim2.fromOffset(Width, Height)
         end
@@ -16664,14 +16711,39 @@ function Library:CreateWindow(WindowInfo)
     end
     if Library.IsMobile then
         Window:RefreshMobileLayout(true)
-        local MobileCamera = workspace.CurrentCamera
-        if MobileCamera then
-            Library:GiveSignal(MobileCamera:GetPropertyChangedSignal("ViewportSize"):Connect(function()
+        local MobileRefreshQueued = false
+        local function QueueMobileRefresh()
+            if MobileRefreshQueued or Library.Unloaded then
+                return
+            end
+            MobileRefreshQueued = true
+            task.defer(function()
+                MobileRefreshQueued = false
                 if not Library.Unloaded then
                     Window:RefreshMobileLayout(true)
                 end
-            end))
+            end)
         end
+        local WatchedCamera
+        local function WatchMobileCamera(Camera)
+            if Camera == WatchedCamera then
+                return
+            end
+            WatchedCamera = Camera
+            if Camera then
+                Library:GiveSignal(Camera:GetPropertyChangedSignal("ViewportSize"):Connect(function()
+                    if workspace.CurrentCamera == Camera then
+                        QueueMobileRefresh()
+                    end
+                end))
+            end
+            QueueMobileRefresh()
+        end
+        WatchMobileCamera(workspace.CurrentCamera)
+        Library:GiveSignal(workspace:GetPropertyChangedSignal("CurrentCamera"):Connect(function()
+            WatchMobileCamera(workspace.CurrentCamera)
+        end))
+        Library:GiveSignal(ScreenGui:GetPropertyChangedSignal("AbsoluteSize"):Connect(QueueMobileRefresh))
     end
     if WindowInfo.AutoShow and not Library.ActiveLoading then
         task.defer(function()
@@ -17873,9 +17945,16 @@ function Library:LoadSettingsTab(Window, SettingsInfo)
 
     MenuGroup:AddDropdown("UISettingsDPIScale", {
         Text = "DPI Scale",
-        Values = { "50%", "60%", "70%", "75%", "80%", "90%", "100%", "110%", "125%", "150%", "175%", "200%" },
-        Default = tostring(math.floor((Library.DPIScale or 1) * 100 + 0.5)) .. "%",
+        Values = Library.IsMobile
+            and { "Auto (Mobile)", "50%", "60%", "70%", "75%", "80%", "90%", "100%", "110%", "125%", "150%", "175%", "200%" }
+            or { "50%", "60%", "70%", "75%", "80%", "90%", "100%", "110%", "125%", "150%", "175%", "200%" },
+        Default = Library.IsMobile and Library.MobileAutoScale and "Auto (Mobile)"
+            or tostring(math.floor((Library.DPIScale or 1) * 100 + 0.5)) .. "%",
         Callback = function(Value)
+            if Value == "Auto (Mobile)" and Library.IsMobile then
+                Library:SetMobileAutoScale(true)
+                return
+            end
             local System = tostring(Value):gsub("%%", "")
             local Scale = tonumber(System)
             if Scale then
@@ -17952,15 +18031,19 @@ function Library:LoadSettingsTab(Window, SettingsInfo)
         Window:SetCompact(false)
         local DefaultDensity = "Comfortable"
         Library:SetUIDensity(DefaultDensity)
-        Library:SetDPIScale(100)
+        if Library.IsMobile then
+            Library:SetMobileAutoScale(true)
+        else
+            Library:SetDPIScale(100)
+        end
         if Options.UISettingsDensity then
             Options.UISettingsDensity:SetValue(DefaultDensity)
         end
         if Options.UISettingsDPIScale then
-            Options.UISettingsDPIScale:SetValue("100%")
+            Options.UISettingsDPIScale:SetValue(Library.IsMobile and "Auto (Mobile)" or "100%")
         end
         if Options.UISettingsWindowSize and not false then
-            Options.UISettingsWindowSize:SetValue("Standard")
+            Options.UISettingsWindowSize:SetValue(Library.IsMobile and "Auto (Mobile)" or "Standard")
         end
         if Options.UISettingsVisualStyle then
             Options.UISettingsVisualStyle:SetValue("Default")
@@ -17989,10 +18072,12 @@ function Library:LoadSettingsTab(Window, SettingsInfo)
 
     WindowGroup:AddDropdown("UISettingsWindowSize", {
         Text = "GUI Size",
-        Values = { "Small", "Standard", "Large", "Extra Large", "Wide" },
+        Values = Library.IsMobile
+            and { "Auto (Mobile)", "Small", "Standard", "Large", "Extra Large", "Wide" }
+            or { "Small", "Standard", "Large", "Extra Large", "Wide" },
         Default = Library.WindowSizePreset,
         Visible = not false,
-        Tooltip = "Resize the window while keeping it within the screen. Use Mobile Menu Size on phones.",
+        Tooltip = "Auto (Mobile) fits your screen and rotates with the device. Presets use a fixed preferred size.",
         Callback = function(Value)
             Window:SetWindowSize(Value)
         end,
