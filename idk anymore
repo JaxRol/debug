@@ -389,6 +389,7 @@ else
     Library.IsMobile = (Library.DevicePlatform == Enum.Platform.Android or Library.DevicePlatform == Enum.Platform.IOS)
     Library.OriginalMinSize = Library.IsMobile and Vector2.new(480, 240) or Vector2.new(480, 360)
 end
+Library.SidebarTabStyle = Library.IsMobile and "Compact Labeled" or "Original"
 local Templates = {
     Frame = {
         BorderSizePixel = 0,
@@ -461,6 +462,7 @@ local Templates = {
         EnableCompacting = true,
         DisableCompactingSnap = false,
         SidebarCompacted = Library.IsMobile,
+        SidebarTabStyle = Library.IsMobile and "Compact Labeled" or "Original",
         MinContainerWidth = 256,
         MinSidebarWidth = 170,
         SidebarCompactWidth = 52,
@@ -12400,6 +12402,10 @@ end
 
 function Library:CreateWindow(WindowInfo)
     WindowInfo = Library:Validate(WindowInfo, Templates.Window)
+    if WindowInfo.SidebarTabStyle ~= "Original" and WindowInfo.SidebarTabStyle ~= "Compact Labeled" then
+        WindowInfo.SidebarTabStyle = Library.IsMobile and "Compact Labeled" or "Original"
+    end
+    Library.SidebarTabStyle = WindowInfo.SidebarTabStyle
     if Library.IsMobile then
         if WindowInfo.Size == Templates.Window.Size then
             WindowInfo.Size = UDim2.fromOffset(600, 520)
@@ -13434,6 +13440,30 @@ function Library:CreateWindow(WindowInfo)
         MainFrame.BackgroundTransparency = alpha
         Library.Scheme.WindowTransparency = Transparency
     end
+    local function ApplyTabButtonStyle(Button)
+        if not Button or not Button.Label then
+            return
+        end
+        local Labeled = Library.SidebarTabStyle == "Compact Labeled" and not IsCompact
+        Button.Label.Visible = not IsCompact
+        Button.Label.TextSize = Labeled and 13 or (Library.IsMobile and 16 or 14)
+        Button.Label.Position = UDim2.fromOffset(Labeled and 28 or 30, 0)
+        Button.Label.Size = UDim2.new(1, Labeled and -28 or -30, 1, 0)
+        Button.Label.TextTruncate = Enum.TextTruncate.AtEnd
+        if Button.Button then
+            Button.Button.Size = UDim2.new(1, 0, 0, Labeled and 44 or Button.DefaultHeight or (Library.IsMobile and 40 or 42))
+        end
+        local VerticalPadding = Labeled and 12 or (Library.IsMobile and (IsCompact and 8 or 10) or (IsCompact and 9 or 10))
+        local HorizontalPadding = Labeled and 10 or (IsCompact and (Library.IsMobile and 8 or 9) or 12)
+        Button.Padding.PaddingBottom = UDim.new(0, VerticalPadding)
+        Button.Padding.PaddingTop = UDim.new(0, VerticalPadding)
+        Button.Padding.PaddingLeft = UDim.new(0, HorizontalPadding)
+        Button.Padding.PaddingRight = UDim.new(0, HorizontalPadding)
+        if Button.Icon then
+            Button.Icon.Size = Labeled and UDim2.fromOffset(20, 20) or UDim2.fromScale(1, 1)
+            Button.Icon.SizeConstraint = IsCompact and Enum.SizeConstraint.RelativeXY or Enum.SizeConstraint.RelativeYY
+        end
+    end
     local function ApplyCompact()
         IsCompact = Window:GetSidebarWidth() == WindowInfo.SidebarCompactWidth
         if WindowInfo.DisableCompactingSnap then
@@ -13444,16 +13474,30 @@ function Library:CreateWindow(WindowInfo)
             WindowIcon.Visible = IsCompact
         end
         for _, Button in Library.TabButtons do
-            if not Button.Icon then
-                continue
-            end
-            Button.Label.Visible = not IsCompact
-            Button.Padding.PaddingBottom = UDim.new(0, Library.IsMobile and (IsCompact and 8 or 10) or (IsCompact and 9 or 10))
-            Button.Padding.PaddingLeft = UDim.new(0, Library.IsMobile and (IsCompact and 8 or 10) or (IsCompact and 9 or 12))
-            Button.Padding.PaddingRight = UDim.new(0, Library.IsMobile and (IsCompact and 8 or 10) or (IsCompact and 9 or 12))
-            Button.Padding.PaddingTop = UDim.new(0, Library.IsMobile and (IsCompact and 8 or 10) or (IsCompact and 9 or 10))
-            Button.Icon.SizeConstraint = IsCompact and Enum.SizeConstraint.RelativeXY or Enum.SizeConstraint.RelativeYY
+            ApplyTabButtonStyle(Button)
         end
+    end
+    function Window:SetSidebarTabStyle(Style)
+        if Style ~= "Original" and Style ~= "Compact Labeled" then
+            return false
+        end
+        local OldStyle = Library.SidebarTabStyle
+        Library.SidebarTabStyle = Style
+        WindowInfo.SidebarTabStyle = Style
+        if Style == "Compact Labeled" then
+            local AvailableWidth = math.max(WindowInfo.SidebarCompactWidth, MainFrame.Size.X.Offset - WindowInfo.MinContainerWidth - 1)
+            local DesiredWidth = math.max(156, math.floor(MainFrame.Size.X.Offset * (Library.IsMobile and 0.30 or 0.265) + 0.5))
+            if OldStyle ~= Style and not IsCompact then
+                Window.OriginalSidebarWidth = Window:GetSidebarWidth()
+            end
+            Window:SetSidebarWidth(math.min(DesiredWidth, AvailableWidth))
+        elseif Library.IsMobile then
+            Window:SetSidebarWidth(WindowInfo.SidebarCompactWidth)
+        elseif OldStyle ~= Style then
+            Window:SetSidebarWidth(Window.OriginalSidebarWidth or LastExpandedWidth)
+        end
+        ApplyCompact()
+        return true
     end
     function Window:IsSidebarCompacted()
         return IsCompact
@@ -13597,11 +13641,15 @@ function Library:CreateWindow(WindowInfo)
                     Parent = TabButton,
                 })
             end
-            table.insert(Library.TabButtons, {
+            local ButtonInfo = {
+                Button = TabButton,
+                DefaultHeight = TabButton.Size.Y.Offset,
                 Label = TabLabel,
                 Padding = ButtonPadding,
                 Icon = TabIcon,
-            })
+            }
+            table.insert(Library.TabButtons, ButtonInfo)
+            ApplyTabButtonStyle(ButtonInfo)
             TabContainer = New("Frame", {
                 BackgroundTransparency = 1,
                 Size = UDim2.fromScale(1, 1),
@@ -15098,11 +15146,15 @@ function Library:CreateWindow(WindowInfo)
                     Parent = TabButton,
                 })
             end
-            table.insert(Library.TabButtons, {
+            local ButtonInfo = {
+                Button = TabButton,
+                DefaultHeight = TabButton.Size.Y.Offset,
                 Label = TabLabel,
                 Padding = ButtonPadding,
                 Icon = TabIcon,
-            })
+            }
+            table.insert(Library.TabButtons, ButtonInfo)
+            ApplyTabButtonStyle(ButtonInfo)
             TabContainer = New("ScrollingFrame", {
                 AutomaticCanvasSize = Enum.AutomaticSize.Y,
                 BackgroundTransparency = 1,
@@ -15848,11 +15900,15 @@ function Library:CreateWindow(WindowInfo)
                     Parent = TabButton,
                 })
             end
-            table.insert(Library.TabButtons, {
+            local ButtonInfo = {
+                Button = TabButton,
+                DefaultHeight = TabButton.Size.Y.Offset,
                 Label = TabLabel,
                 Padding = ButtonPadding,
                 Icon = TabIcon,
-            })
+            }
+            table.insert(Library.TabButtons, ButtonInfo)
+            ApplyTabButtonStyle(ButtonInfo)
             TabContainer = New("ScrollingFrame", {
                 AutomaticCanvasSize = Enum.AutomaticSize.Y,
                 BackgroundTransparency = 1,
@@ -16584,6 +16640,9 @@ function Library:CreateWindow(WindowInfo)
     Library:SetGuiEffectsEnabled(WindowInfo.GuiEffects)
     if WindowInfo.EnableCompacting and WindowInfo.SidebarCompacted then
         Window:SetSidebarWidth(WindowInfo.SidebarCompactWidth)
+    end
+    if Library.SidebarTabStyle == "Compact Labeled" then
+        Window:SetSidebarTabStyle("Compact Labeled")
     end
     if WindowInfo.AutoShow and not Library.ActiveLoading then
         task.defer(function()
@@ -17778,6 +17837,16 @@ function Library:LoadSettingsTab(Window, SettingsInfo)
         end,
     })
 
+    MenuGroup:AddDropdown("UISettingsSidebarTabStyle", {
+        Text = "Sidebar Tab Style",
+        Values = { "Original", "Compact Labeled" },
+        Default = Library.SidebarTabStyle,
+        Tooltip = "Choose icon-only compact navigation or labeled tabs with small icons. Keeps the outer window size unchanged. Mobile defaults to Compact Labeled; PC defaults to Original.",
+        Callback = function(Value)
+            Window:SetSidebarTabStyle(Value)
+        end,
+    })
+
     MenuGroup:AddDropdown("UISettingsDensity", {
         Text = "Control Density",
         Values = { "Comfortable", "Compact" },
@@ -17867,9 +17936,13 @@ function Library:LoadSettingsTab(Window, SettingsInfo)
 
     MenuGroup:AddButton("Reset Interface Layout", function()
         if Library.IsMobile then
-            Window:SetCompact(true)
+            Window:SetSidebarTabStyle("Compact Labeled")
         else
+            Window:SetSidebarTabStyle("Original")
             Window:SetCompact(false)
+        end
+        if Options.UISettingsSidebarTabStyle then
+            Options.UISettingsSidebarTabStyle:SetValue(Library.IsMobile and "Compact Labeled" or "Original")
         end
         local DefaultDensity = "Comfortable"
         Library:SetUIDensity(DefaultDensity)
