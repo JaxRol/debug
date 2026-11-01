@@ -13889,6 +13889,7 @@ function Library:CreateWindow(WindowInfo)
             DependencyGroupboxes = {},
             SingleColumn = false,
             ManualSingleColumn = false,
+            MobileTwoColumns = Library.IsMobile,
             ResponsiveElementOrder = 0,
             SubPages = {},
             SubPagesByName = {},
@@ -14494,6 +14495,26 @@ function Library:CreateWindow(WindowInfo)
 
             WarningBoxHolder.Position = UDim2.fromOffset(0, SubPageOffset + 7)
 
+            if Tab.MobileTwoColumns then
+                Tab.SingleColumn = false
+                for _, Groupbox in Tab.Groupboxes do
+                    if Groupbox and Groupbox.BoxHolder then
+                        local TargetSide = Groupbox.Side == 2 and TabRight or TabLeft
+                        if Groupbox.BoxHolder.Parent ~= TargetSide then
+                            Groupbox.BoxHolder.Parent = TargetSide
+                        end
+                    end
+                end
+                for _, Tabbox in Tab.Tabboxes do
+                    if Tabbox and Tabbox.BoxHolder then
+                        local TargetSide = Tabbox.Side == 2 and TabRight or TabLeft
+                        if Tabbox.BoxHolder.Parent ~= TargetSide then
+                            Tabbox.BoxHolder.Parent = TargetSide
+                        end
+                    end
+                end
+            end
+
             if Tab.SingleColumn then
                 TabLeft.AnchorPoint = Vector2.zero
                 TabLeft.Position = UDim2.new(0, 0, 0, Offset)
@@ -14515,11 +14536,14 @@ function Library:CreateWindow(WindowInfo)
         end
 
         function Tab:SetSingleColumn(State, ResponsiveChange)
-            local NextState = not Library.IsMobile and State == true
+            local NextState = State == true and not Tab.MobileTwoColumns
             if not ResponsiveChange then
                 Tab.ManualSingleColumn = NextState
             end
             if Tab.SingleColumn == NextState then
+                if Tab.MobileTwoColumns then
+                    Tab:RefreshSides()
+                end
                 return NextState
             end
             Tab.SingleColumn = NextState
