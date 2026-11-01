@@ -13515,7 +13515,7 @@ function Library:CreateWindow(WindowInfo)
         Window:SetSidebarWidth(Window:GetSidebarWidth())
         for _, Tab in next, Library.Tabs do
             if typeof(Tab) == "table" and not Tab.IsKeyTab and typeof(Tab.SetSingleColumn) == "function" then
-                Tab:SetSingleColumn(not Tab.MobileTwoColumns and (TargetWidth - Window:GetSidebarWidth() < 470 or Tab.ManualSingleColumn == true), true)
+                Tab:SetSingleColumn((not Library.IsMobile and TargetWidth - Window:GetSidebarWidth() < 470) or Tab.ManualSingleColumn == true, true)
             end
         end
         return true
@@ -13889,7 +13889,6 @@ function Library:CreateWindow(WindowInfo)
             DependencyGroupboxes = {},
             SingleColumn = false,
             ManualSingleColumn = false,
-            MobileTwoColumns = Library.IsMobile or UserInputService.TouchEnabled,
             ResponsiveElementOrder = 0,
             SubPages = {},
             SubPagesByName = {},
@@ -14495,11 +14494,10 @@ function Library:CreateWindow(WindowInfo)
 
             WarningBoxHolder.Position = UDim2.fromOffset(0, SubPageOffset + 7)
 
-            if Tab.MobileTwoColumns then
-                Tab.SingleColumn = false
+            if Library.IsMobile then
                 for _, Groupbox in Tab.Groupboxes do
                     if Groupbox and Groupbox.BoxHolder then
-                        local TargetSide = Groupbox.Side == 2 and TabRight or TabLeft
+                        local TargetSide = Tab.SingleColumn and TabLeft or (Groupbox.Side == 2 and TabRight or TabLeft)
                         if Groupbox.BoxHolder.Parent ~= TargetSide then
                             Groupbox.BoxHolder.Parent = TargetSide
                         end
@@ -14507,7 +14505,7 @@ function Library:CreateWindow(WindowInfo)
                 end
                 for _, Tabbox in Tab.Tabboxes do
                     if Tabbox and Tabbox.BoxHolder then
-                        local TargetSide = Tabbox.Side == 2 and TabRight or TabLeft
+                        local TargetSide = Tab.SingleColumn and TabLeft or (Tabbox.Side == 2 and TabRight or TabLeft)
                         if Tabbox.BoxHolder.Parent ~= TargetSide then
                             Tabbox.BoxHolder.Parent = TargetSide
                         end
@@ -14536,39 +14534,28 @@ function Library:CreateWindow(WindowInfo)
         end
 
         function Tab:SetSingleColumn(State, ResponsiveChange)
-            local NextState = State == true and not Tab.MobileTwoColumns
+            local NextState = State == true
+            if Library.IsMobile and ResponsiveChange then
+                NextState = Tab.ManualSingleColumn == true
+            end
             if not ResponsiveChange then
                 Tab.ManualSingleColumn = NextState
             end
             if Tab.SingleColumn == NextState then
-                if Tab.MobileTwoColumns then
-                    Tab:RefreshSides()
-                end
+                Tab:RefreshSides()
                 return NextState
             end
             Tab.SingleColumn = NextState
 
             for _, Groupbox in Tab.Groupboxes do
                 if Groupbox and Groupbox.BoxHolder then
-                    if Tab.SingleColumn then
-                        Groupbox.BoxHolder.Parent = TabLeft
-                    elseif Groupbox.Side == 2 then
-                        Groupbox.BoxHolder.Parent = TabRight
-                    else
-                        Groupbox.BoxHolder.Parent = TabLeft
-                    end
+                    Groupbox.BoxHolder.Parent = Tab.SingleColumn and TabLeft or (Groupbox.Side == 2 and TabRight or TabLeft)
                 end
             end
 
             for _, Tabbox in Tab.Tabboxes do
                 if Tabbox and Tabbox.BoxHolder then
-                    if Tab.SingleColumn then
-                        Tabbox.BoxHolder.Parent = TabLeft
-                    elseif Tabbox.Side == 2 then
-                        Tabbox.BoxHolder.Parent = TabRight
-                    else
-                        Tabbox.BoxHolder.Parent = TabLeft
-                    end
+                    Tabbox.BoxHolder.Parent = Tab.SingleColumn and TabLeft or (Tabbox.Side == 2 and TabRight or TabLeft)
                 end
             end
 
@@ -15099,18 +15086,6 @@ function Library:CreateWindow(WindowInfo)
             Tab:UpdateDisplayedInfo()
             TabContainer.Visible = true
             Tab:RefreshSides()
-            if not Tab._ColumnDiagnosticPrinted then
-                Tab._ColumnDiagnosticPrinted = true
-                task.defer(function()
-                    warn("[Zero Point Columns v2] tab=" .. tostring(Name)
-                        .. " mobile=" .. tostring(Library.IsMobile)
-                        .. " touch=" .. tostring(UserInputService.TouchEnabled)
-                        .. " enforced=" .. tostring(Tab.MobileTwoColumns)
-                        .. " single=" .. tostring(Tab.SingleColumn)
-                        .. " left=" .. tostring(math.floor(TabLeft.AbsoluteSize.X))
-                        .. " right=" .. tostring(math.floor(TabRight.AbsoluteSize.X)))
-                end)
-            end
             Library.ActiveTab = Tab
             if Library.Searching then
                 Library:UpdateSearch(Library.SearchText)
