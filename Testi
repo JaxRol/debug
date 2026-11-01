@@ -2196,29 +2196,34 @@ local function New(ClassName: string, Properties: { [string]: any }): any
 
     return Object
 end
-local function SafeParentUI(Instance: Instance, Parent: Instance | () -> Instance)
-    local success, _error = pcall(function()
-        if not Parent then
-            Parent = CoreGui
+local function SafeParentUI(UI: Instance)
+    local Candidates = {}
+    if typeof(gethui) == "function" then
+        local Success, Candidate = pcall(gethui)
+        if Success and typeof(Candidate) == "Instance" then
+            table.insert(Candidates, Candidate)
         end
-        local DestinationParent
-        if typeof(Parent) == "function" then
-            DestinationParent = Parent()
-        else
-            DestinationParent = Parent
-        end
-        Instance.Parent = DestinationParent
-    end)
-    if not (success and Instance.Parent) then
-        Instance.Parent = Library.LocalPlayer:WaitForChild("PlayerGui", math.huge)
     end
+    if typeof(CoreGui) == "Instance" and Candidates[1] ~= CoreGui then
+        table.insert(Candidates, CoreGui)
+    end
+    for _, Candidate in ipairs(Candidates) do
+        local CheckSuccess, IsUnderPlayerGui = pcall(function()
+            return Candidate:IsA("PlayerGui") or Candidate:FindFirstAncestorOfClass("PlayerGui") ~= nil
+        end)
+        if CheckSuccess and not IsUnderPlayerGui then
+            local Success = pcall(function()
+                UI.Parent = Candidate
+            end)
+            if Success and UI.Parent == Candidate then
+                return Candidate
+            end
+        end
+    end
+    error("Unable to parent GUI to gethui() or CoreGui", 2)
 end
-local function ParentUI(UI: Instance, SkipHiddenUI: boolean?)
-    if SkipHiddenUI then
-        SafeParentUI(UI, CoreGui)
-        return
-    end
-    SafeParentUI(UI, LocalPlayer:WaitForChild("PlayerGui"))
+local function ParentUI(UI: Instance)
+    return SafeParentUI(UI)
 end
 local ScreenGui = New("ScreenGui", {
     Name = "Obsidian",
@@ -2599,7 +2604,7 @@ ScreenEffectRoot.IgnoreGuiInset = true
 ScreenEffectRoot.ResetOnSpawn = false
 ScreenEffectRoot.ZIndexBehavior = Enum.ZIndexBehavior.Global
 ScreenEffectRoot.Enabled = false
-ScreenEffectRoot.Parent = LocalPlayer:WaitForChild("PlayerGui")
+ParentUI(ScreenEffectRoot)
 
 EffectSystem.ScreenRoot = ScreenEffectRoot
 getgenv().ZeroPointActiveScreenEffectsGui = ScreenEffectRoot
@@ -17713,7 +17718,7 @@ do
         _WMGui.ResetOnSpawn = false
         _WMGui.ZIndexBehavior = Enum.ZIndexBehavior.Sibling
         _WMGui.DisplayOrder = 999
-        _WMGui.Parent = lp:WaitForChild("PlayerGui")
+        ParentUI(_WMGui)
         _WMFrame = Instance.new("Frame")
         _WMFrame.Name = "WatermarkFrame"
         _WMFrame.BackgroundColor3 = cfg.BackgroundColor
