@@ -14710,8 +14710,10 @@ function Library:CreateWindow(WindowInfo)
             local ToggleButton
             do
                 GroupboxHolder = New("Frame", {
+                    AutomaticSize = Enum.AutomaticSize.Y,
                     BackgroundColor3 = "MainColor",
-                    Size = UDim2.fromScale(1, 0),
+                    ClipsDescendants = true,
+                    Size = UDim2.new(1, 0, 0, Library.IsMobile and 26 or 42),
                     Parent = BoxHolder,
                 })
                 table.insert(
@@ -14775,9 +14777,10 @@ function Library:CreateWindow(WindowInfo)
                     Parent = ToggleButton,
                 })
                 GroupboxContainer = New("Frame", {
+                    AutomaticSize = Enum.AutomaticSize.Y,
                     BackgroundTransparency = 1,
                     Position = UDim2.fromOffset(0, Library.IsMobile and 26 or 43),
-                    Size = UDim2.new(1, 0, 1, Library.IsMobile and -26 or -43),
+                    Size = UDim2.new(1, 0, 0, 0),
                     Parent = GroupboxHolder,
                 })
                 GroupboxList = New("UIListLayout", {
@@ -14828,14 +14831,10 @@ function Library:CreateWindow(WindowInfo)
                 end
             end
             function Groupbox:Resize()
-                local GroupboxSize
-                if self.Collapsed then
-                    GroupboxSize = UDim2.new(1, 0, 0, Library.IsMobile and 26 or 42)
-                else
-                    GroupboxSize = UDim2.new(1, 0, 0, (GroupboxList.AbsoluteContentSize.Y / (Library.IsMobile and 1 or Library.DPIScale)) + (Library.IsMobile and 33 or 67))
-                end
+                local HeaderHeight = Library.IsMobile and 26 or 42
+                GroupboxHolder.AutomaticSize = self.Collapsed and Enum.AutomaticSize.None or Enum.AutomaticSize.Y
+                GroupboxHolder.Size = UDim2.new(1, 0, 0, HeaderHeight)
                 GroupboxLine.Visible = not self.Collapsed
-                GroupboxHolder.Size = GroupboxSize
             end
             function Groupbox:SetCollapsed(State)
                 self.Collapsed = State
@@ -15568,8 +15567,10 @@ function Library:CreateWindow(WindowInfo)
             local ToggleButton
             do
                 GroupboxHolder = New("Frame", {
+                    AutomaticSize = Enum.AutomaticSize.Y,
                     BackgroundColor3 = "BackgroundColor",
-                    Size = UDim2.fromScale(1, 0),
+                    ClipsDescendants = true,
+                    Size = UDim2.new(1, 0, 0, 34),
                     Parent = BoxHolder,
                 })
                 table.insert(
@@ -15632,9 +15633,10 @@ function Library:CreateWindow(WindowInfo)
                     Parent = ToggleButton,
                 })
                 GroupboxContainer = New("Frame", {
+                    AutomaticSize = Enum.AutomaticSize.Y,
                     BackgroundTransparency = 1,
                     Position = UDim2.fromOffset(0, 35),
-                    Size = UDim2.new(1, 0, 1, -35),
+                    Size = UDim2.new(1, 0, 0, 0),
                     Parent = GroupboxHolder,
                 })
                 GroupboxList = New("UIListLayout", {
@@ -15661,14 +15663,9 @@ function Library:CreateWindow(WindowInfo)
             }
             Groupbox.RootGroupbox = Groupbox
             function Groupbox:Resize()
-                local GroupboxSize
-                if self.Collapsed then
-                    GroupboxSize = UDim2.new(1, 0, 0, 34)
-                else
-                    GroupboxSize = UDim2.new(1, 0, 0, (GroupboxList.AbsoluteContentSize.Y / Library.DPIScale) + 49)
-                end
+                GroupboxHolder.AutomaticSize = self.Collapsed and Enum.AutomaticSize.None or Enum.AutomaticSize.Y
+                GroupboxHolder.Size = UDim2.new(1, 0, 0, 34)
                 GroupboxLine.Visible = not self.Collapsed
-                GroupboxHolder.Size = GroupboxSize
             end
             function Groupbox:SetCollapsed(State)
                 self.Collapsed = State
