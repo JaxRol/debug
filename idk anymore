@@ -330,6 +330,7 @@ local Library = {
     MinSize = Vector2.new(480, 360),
     DPIScale = 1,
     MobileAutoScale = true,
+    MobileWindowWasDragged = false,
     MobileWindowSizeOverride = false,
     VisualStyle = "Default",
     WindowSizePreset = "Standard",
@@ -1920,19 +1921,33 @@ function Library:GetMobileResponsiveScale(Viewport: Vector2): number
     if not self.IsMobile or not self.MobileAutoScale then
         return self.DPIScale
     end
-    local WidthFactor = math.max(0.1, Viewport.X / 850)
-    local HeightFactor = math.max(0.1, Viewport.Y / 480)
-    return math.clamp(math.sqrt(math.min(WidthFactor, HeightFactor)), 0.8, 1.35)
+    local WidthFactor = math.max(0.1, Viewport.X / 1050)
+    local HeightFactor = math.max(0.1, Viewport.Y / 640)
+    return math.clamp(math.min(WidthFactor, HeightFactor) ^ 0.35, 0.76, 1.12)
 end
 function Library:GetMobileLayoutMetrics(Viewport: Vector2)
     local Scale = self:GetMobileResponsiveScale(Viewport)
-    local HorizontalMargin = math.clamp(Viewport.X * 0.05, 8, 28)
-    local VerticalMargin = math.clamp(Viewport.Y * 0.06, 8, 30)
-    local AvailableWidth = math.max(1, math.floor((Viewport.X - HorizontalMargin * 2) / Scale))
-    local AvailableHeight = math.max(1, math.floor((Viewport.Y - VerticalMargin * 2) / Scale))
+    local Landscape = Viewport.X >= Viewport.Y
+    local WidthFraction
+    local HeightFraction
+    if Landscape then
+        WidthFraction = 0.94 - 0.16 * math.clamp((Viewport.X - 800) / 400, 0, 1)
+        HeightFraction = 0.92 - 0.12 * math.clamp((Viewport.Y - 440) / 200, 0, 1)
+    else
+        WidthFraction = 0.94
+        HeightFraction = 0.80
+    end
+    local HorizontalMargin = math.max(8, math.min(18, Viewport.X * 0.02))
+    local VerticalMargin = math.max(8, math.min(18, Viewport.Y * 0.025))
+    local MaximumPixelWidth = math.min(1050, Viewport.X - HorizontalMargin * 2)
+    local MaximumPixelHeight = math.min(675, Viewport.Y - VerticalMargin * 2)
+    local AvailableWidth = math.max(1, math.floor(MaximumPixelWidth / Scale))
+    local AvailableHeight = math.max(1, math.floor(MaximumPixelHeight / Scale))
+    local TargetWidth = math.max(1, math.floor(math.min(MaximumPixelWidth, Viewport.X * WidthFraction) / Scale))
+    local TargetHeight = math.max(1, math.floor(math.min(MaximumPixelHeight, Viewport.Y * HeightFraction) / Scale))
     local Preferred = self.MobilePreferredWindowSize or Vector2.new(600, 520)
-    local Width = self.MobileWindowSizeOverride and math.min(Preferred.X, AvailableWidth) or AvailableWidth
-    local Height = self.MobileWindowSizeOverride and math.min(Preferred.Y, AvailableHeight) or AvailableHeight
+    local Width = self.MobileWindowSizeOverride and math.min(Preferred.X, AvailableWidth) or TargetWidth
+    local Height = self.MobileWindowSizeOverride and math.min(Preferred.Y, AvailableHeight) or TargetHeight
     return Scale, math.max(1, math.floor(Width)), math.max(1, math.floor(Height)), AvailableWidth, AvailableHeight
 end
 function Library:SetDPIScale(DPIScale: number)
@@ -2874,6 +2889,7 @@ function Library:MakeDraggable(
 )
     local StartPos
     local FramePos
+    local ActiveInput
     local Dragging = false
     local DragDistance = 0
     local LastDragEnded = 0
@@ -2882,51 +2898,86 @@ function Library:MakeDraggable(
     local function DraggingAllowed(): boolean
         return not CanDrag or CanDrag()
     end
+    local function StopDragging()
+        if Dragging and DragDistance >= 6 then
+            LastDragEnded = tick()
+        end
+        Dragging = false
+        ActiveInput = nil
+        if Changed and Changed.Connected then
+            Changed:Disconnect()
+            Changed = nil
+        end
+    end
+    DragFrame.Active = true
     DragFrame.InputBegan:Connect(function(Input: InputObject)
-        if
-            not IsClickInput(Input)
-            or IsMainWindow and Library.CantDragForced
-            or not DraggingAllowed()
-        then
+        if not IsClickInput(Input) or (IsMainWindow and Library.CantDragForced) or not DraggingAllowed() then
             return
         end
+        StopDragging()
         StartPos = Input.Position
         FramePos = UI.Position
+        ActiveInput = Input
         DragDistance = 0
         Dragging = true
         Changed = Input.Changed:Connect(function()
-            if Input.UserInputState ~= Enum.UserInputState.End then
-                return
-            end
-            if DragDistance >= 6 then
-                LastDragEnded = tick()
-            end
-            Dragging = false
-            if Changed and Changed.Connected then
-                Changed:Disconnect()
-                Changed = nil
+            if Input.UserInputState == Enum.UserInputState.End or Input.UserInputState == Enum.UserInputState.Cancel then
+                StopDragging()
             end
         end)
     end)
     Library:GiveSignal(UserInputService.InputChanged:Connect(function(Input: InputObject)
-        if
-            (not IgnoreToggled and not Library.Toggled)
-            or (IsMainWindow and Library.CantDragForced)
-            or not DraggingAllowed()
-            or not (ScreenGui and ScreenGui.Parent)
-        then
-            Dragging = false
-            if Changed and Changed.Connected then
-                Changed:Disconnect()
-                Changed = nil
-            end
+        if not Dragging then
             return
         end
-        if Dragging and IsHoverInput(Input) then
-            local Delta = Input.Position - StartPos
-            DragDistance = Delta.Magnitude
-            UI.Position =
-                UDim2.new(FramePos.X.Scale, FramePos.X.Offset + Delta.X, FramePos.Y.Scale, FramePos.Y.Offset + Delta.Y)
+        if (not IgnoreToggled and not Library.Toggled)
+            or (IsMainWindow and Library.CantDragForced)
+            or not DraggingAllowed()
+            or not (ScreenGui and ScreenGui.Parent) then
+            StopDragging()
+            return
+        end
+        local Touch = ActiveInput and ActiveInput.UserInputType == Enum.UserInputType.Touch
+        if (Touch and Input ~= ActiveInput)
+            or (not Touch and Input.UserInputType ~= Enum.UserInputType.MouseMovement) then
+            return
+        end
+        local Delta = Input.Position - StartPos
+        DragDistance = Delta.Magnitude
+        local Position = UDim2.new(
+            FramePos.X.Scale, FramePos.X.Offset + Delta.X,
+            FramePos.Y.Scale, FramePos.Y.Offset + Delta.Y
+        )
+        if IsMainWindow and Library.IsMobile then
+            local Viewport = ScreenGui.AbsoluteSize
+            if Viewport.X > 10 and Viewport.Y > 10 then
+                local Size = UI.AbsoluteSize
+                local MinX = Size.X * UI.AnchorPoint.X + 8
+                local MaxX = Viewport.X - Size.X * (1 - UI.AnchorPoint.X) - 8
+                local MinY = Size.Y * UI.AnchorPoint.Y + 8
+                local MaxY = Viewport.Y - Size.Y * (1 - UI.AnchorPoint.Y) - 8
+                local PixelX = Viewport.X * Position.X.Scale + Position.X.Offset
+                local PixelY = Viewport.Y * Position.Y.Scale + Position.Y.Offset
+                PixelX = MaxX < MinX and Viewport.X * 0.5 or math.clamp(PixelX, MinX, MaxX)
+                PixelY = MaxY < MinY and Viewport.Y * 0.5 or math.clamp(PixelY, MinY, MaxY)
+                Position = UDim2.new(
+                    Position.X.Scale, PixelX - Viewport.X * Position.X.Scale,
+                    Position.Y.Scale, PixelY - Viewport.Y * Position.Y.Scale
+                )
+            end
+            if DragDistance >= 6 then
+                Library.MobileWindowWasDragged = true
+            end
+        end
+        UI.Position = Position
+    end))
+    Library:GiveSignal(UserInputService.InputEnded:Connect(function(Input: InputObject)
+        if Dragging and ActiveInput and (
+            Input == ActiveInput or
+            (ActiveInput.UserInputType == Enum.UserInputType.MouseButton1
+                and Input.UserInputType == Enum.UserInputType.MouseButton1)
+        ) then
+            StopDragging()
         end
     end))
     function DragController:ConsumeDrag(): boolean
@@ -12541,6 +12592,14 @@ function Library:CreateWindow(WindowInfo)
     local GradientOverlay
     local BottomBackground
     local FooterLabel
+    local MobileWindowDragHandle
+    local TransparencyHosts = {}
+    local function RegisterTransparencyHost(Host: GuiObject)
+        table.insert(TransparencyHosts, Host)
+        local Alpha = math.clamp((Library.Scheme.WindowTransparency or 0) / 100, 0, 0.9)
+        Host.BackgroundTransparency = math.sqrt(Alpha)
+        return Host
+    end
     local InitialLeftWidth = Library.IsMobile and math.ceil(WindowInfo.Size.X.Offset * 0.3)
         or math.clamp(math.floor(WindowInfo.Size.X.Offset * 0.265 + 0.5), 170, 210)
     local IsCompact = WindowInfo.SidebarCompacted
@@ -12723,7 +12782,9 @@ function Library:CreateWindow(WindowInfo)
             Size = UDim2.new(1, 0, 0, Library.IsMobile and 48 or 52),
             Parent = MainFrame,
         })
-        Library:MakeDraggable(MainFrame, TopBar, false, true)
+        if not Library.IsMobile then
+            Library:MakeDraggable(MainFrame, TopBar, false, true)
+        end
         TitleHolder = New("Frame", {
             BackgroundTransparency = 1,
             Size = UDim2.new(0, InitialLeftWidth, 1, 0),
@@ -12776,6 +12837,19 @@ function Library:CreateWindow(WindowInfo)
             TextXAlignment = Enum.TextXAlignment.Left,
             Parent = TitleHolder,
         })
+        if Library.IsMobile then
+            MobileWindowDragHandle = New("TextButton", {
+                Name = "MobileWindowDragHandle",
+                BackgroundTransparency = 1,
+                Position = UDim2.fromOffset(0, 0),
+                Size = UDim2.new(0, InitialLeftWidth, 1, 0),
+                Text = "",
+                Active = true,
+                ZIndex = 30,
+                Parent = TopBar,
+            })
+            Library:MakeDraggable(MainFrame, MobileWindowDragHandle, false, true)
+        end
         RightWrapper = New("Frame", {
             AnchorPoint = Vector2.new(1, 0.5),
             BackgroundTransparency = 1,
@@ -13151,6 +13225,7 @@ function Library:CreateWindow(WindowInfo)
             Parent = MainFrame
         })
         BottomBackground:SetAttribute("ZeroPointBackgroundHost", true)
+        RegisterTransparencyHost(BottomBackground)
         Library:MakeLine(MainFrame, {
             AnchorPoint = Vector2.new(0, 1),
             Position = UDim2.new(0, 0, 1, -20),
@@ -13228,6 +13303,7 @@ function Library:CreateWindow(WindowInfo)
             Parent = MainFrame,
         })
         Tabs:SetAttribute("ZeroPointBackgroundHost", true)
+        RegisterTransparencyHost(Tabs)
         Library:MakeDragScrollable(Tabs)
         New("UIListLayout", {
             Padding = UDim.new(0, false and 2 or 5),
@@ -13252,6 +13328,7 @@ function Library:CreateWindow(WindowInfo)
             Parent = MainFrame,
         })
         Container:SetAttribute("ZeroPointBackgroundHost", true)
+        RegisterTransparencyHost(Container)
         New("UIPadding", {
             PaddingBottom = UDim.new(0, false and 2 or 7),
             PaddingLeft = UDim.new(0, false and 4 or 11),
@@ -13515,9 +13592,15 @@ function Library:CreateWindow(WindowInfo)
     end
     function Window:SetWindowTransparency(Transparency: number)
         assert(typeof(Transparency) == "number", "Expected number for Transparency, got: " .. typeof(Transparency))
-        local alpha = math.clamp(Transparency / 100, 0, 0.85)
-        MainFrame.BackgroundTransparency = alpha
-        Library.Scheme.WindowTransparency = Transparency
+        local Alpha = math.clamp(Transparency / 100, 0, 0.9)
+        local LayerAlpha = math.sqrt(Alpha)
+        MainFrame.BackgroundTransparency = LayerAlpha
+        for _, Host in TransparencyHosts do
+            if Host and Host.Parent then
+                Host.BackgroundTransparency = LayerAlpha
+            end
+        end
+        Library.Scheme.WindowTransparency = math.floor(Alpha * 100 + 0.5)
     end
     local function ApplyCompact()
         IsCompact = Window:GetSidebarWidth() == WindowInfo.SidebarCompactWidth
@@ -13568,6 +13651,9 @@ function Library:CreateWindow(WindowInfo)
         TitleHolder.Size = UDim2.new(0, Width, 1, 0)
         RightWrapper.Size = UDim2.new(1, -Width - 80, 1, -12)
         Tabs.Size = UDim2.new(0, Width, 1, Library.IsMobile and -70 or -77)
+        if MobileWindowDragHandle then
+            MobileWindowDragHandle.Size = UDim2.new(0, Width, 1, 0)
+        end
         Container.Size = UDim2.new(1, -Width - 1, 1, Library.IsMobile and -70 or -77)
         if WindowInfo.EnableCompacting then
             ApplyCompact()
@@ -13597,7 +13683,24 @@ function Library:CreateWindow(WindowInfo)
         WindowInfo.Size = UDim2.fromOffset(Width, Height)
         MainFrame.AnchorPoint = Vector2.new(0.5, 0.5)
         if Recenter then
+            Library.MobileWindowWasDragged = false
             MainFrame.Position = UDim2.fromScale(0.5, 0.5)
+        else
+            local Position = MainFrame.Position
+            local CenterX = Viewport.X * Position.X.Scale + Position.X.Offset
+            local CenterY = Viewport.Y * Position.Y.Scale + Position.Y.Offset
+            local PixelWidth = Width * Scale
+            local PixelHeight = Height * Scale
+            local MinX = PixelWidth * 0.5 + 8
+            local MaxX = Viewport.X - PixelWidth * 0.5 - 8
+            local MinY = PixelHeight * 0.5 + 8
+            local MaxY = Viewport.Y - PixelHeight * 0.5 - 8
+            CenterX = MinX > MaxX and Viewport.X * 0.5 or math.clamp(CenterX, MinX, MaxX)
+            CenterY = MinY > MaxY and Viewport.Y * 0.5 or math.clamp(CenterY, MinY, MaxY)
+            MainFrame.Position = UDim2.new(
+                Position.X.Scale, CenterX - Viewport.X * Position.X.Scale,
+                Position.Y.Scale, CenterY - Viewport.Y * Position.Y.Scale
+            )
         end
         if Width < 440 and not Window:IsSidebarCompacted() then
             Window:SetCompact(true)
@@ -14635,6 +14738,7 @@ function Library:CreateWindow(WindowInfo)
                     })
                 )
                 Library:AddOutline(GroupboxHolder)
+                RegisterTransparencyHost(GroupboxHolder)
                 GroupboxLine = Library:MakeLine(GroupboxHolder, {
                     Position = UDim2.fromOffset(0, false and 25 or 42),
                     Size = UDim2.new(1, 0, 0, 1),
@@ -15491,6 +15595,7 @@ function Library:CreateWindow(WindowInfo)
                     })
                 )
                 Library:AddOutline(GroupboxHolder)
+                RegisterTransparencyHost(GroupboxHolder)
                 GroupboxLine = Library:MakeLine(GroupboxHolder, {
                     Position = UDim2.fromOffset(0, 34),
                     Size = UDim2.new(1, 0, 0, 1),
@@ -16720,7 +16825,7 @@ function Library:CreateWindow(WindowInfo)
             task.defer(function()
                 MobileRefreshQueued = false
                 if not Library.Unloaded then
-                    Window:RefreshMobileLayout(true)
+                    Window:RefreshMobileLayout(not Library.MobileWindowWasDragged)
                 end
             end)
         end
@@ -16830,21 +16935,21 @@ function Library:CreateWindow(WindowInfo)
             end
             Library:Toggle()
         end)
-        LockButton = CreateSquareMobileButton("lock")
+        LockButton = CreateSquareMobileButton("lock-open")
         local LockButtonDrag = Library:MakeDraggable(LockButton.Button, LockButton.Button, true, false, function()
             return Library.MobileButtonDraggingEnabled
         end)
-        LockButton:SetIconColor(Color3.fromRGB(220, 50, 50))
+        local function UpdateMobileDragLock()
+            LockButton:SetIcon(Library.CantDragForced and "lock" or "lock-open")
+            LockButton:SetIconColor(Library.CantDragForced and Color3.fromRGB(220, 50, 50) or Color3.fromRGB(0, 210, 80))
+        end
+        UpdateMobileDragLock()
         LockButton.Button.MouseButton1Click:Connect(function()
             if LockButtonDrag:ConsumeDrag() then
                 return
             end
             Library.CantDragForced = not Library.CantDragForced
-            if Library.CantDragForced then
-                LockButton:SetIconColor(Color3.fromRGB(0, 210, 80))
-            else
-                LockButton:SetIconColor(Color3.fromRGB(220, 50, 50))
-            end
+            UpdateMobileDragLock()
         end)
         if WindowInfo.MobileButtonsSide == "Right" then
             ToggleButton.Button.Position = UDim2.new(1, -8, 0, 8)
@@ -18087,9 +18192,13 @@ function Library:LoadSettingsTab(Window, SettingsInfo)
         Text = "Window Transparency",
         Default = Library.Scheme.WindowTransparency or 0,
         Min = 0,
-        Max = 60,
+        Max = 90,
         Rounding = 0,
         Suffix = "%",
+        FormatDisplayValue = function(_, Value)
+            return tostring(Value) .. "%"
+        end,
+        Tooltip = "Makes the window background, sidebar, footer, and section panels transparent without fading the controls or text.",
         Callback = function(Value)
             Window:SetWindowTransparency(Value)
         end,
