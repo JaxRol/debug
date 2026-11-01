@@ -13515,7 +13515,7 @@ function Library:CreateWindow(WindowInfo)
         Window:SetSidebarWidth(Window:GetSidebarWidth())
         for _, Tab in next, Library.Tabs do
             if typeof(Tab) == "table" and not Tab.IsKeyTab and typeof(Tab.SetSingleColumn) == "function" then
-                Tab:SetSingleColumn(not Library.IsMobile and (TargetWidth - Window:GetSidebarWidth() < 470 or Tab.ManualSingleColumn == true), true)
+                Tab:SetSingleColumn(not Tab.MobileTwoColumns and (TargetWidth - Window:GetSidebarWidth() < 470 or Tab.ManualSingleColumn == true), true)
             end
         end
         return true
@@ -13889,7 +13889,7 @@ function Library:CreateWindow(WindowInfo)
             DependencyGroupboxes = {},
             SingleColumn = false,
             ManualSingleColumn = false,
-            MobileTwoColumns = Library.IsMobile,
+            MobileTwoColumns = Library.IsMobile or UserInputService.TouchEnabled,
             ResponsiveElementOrder = 0,
             SubPages = {},
             SubPagesByName = {},
@@ -14603,7 +14603,7 @@ function Library:CreateWindow(WindowInfo)
                 AutomaticSize = Enum.AutomaticSize.Y,
                 BackgroundTransparency = 1,
                 Size = UDim2.fromScale(1, 0),
-                Parent = Tab.SingleColumn and TabLeft or (Info.Side == 1 and TabLeft or TabRight),
+                Parent = Tab.SingleColumn and TabLeft or (Info.Side == 2 and TabRight or TabLeft),
             })
             New("UIListLayout", {
                 Padding = UDim.new(0, false and 2 or 6),
@@ -14793,7 +14793,7 @@ function Library:CreateWindow(WindowInfo)
                 AutomaticSize = Enum.AutomaticSize.Y,
                 BackgroundTransparency = 1,
                 Size = UDim2.fromScale(1, 0),
-                Parent = Tab.SingleColumn and TabLeft or (Info.Side == 1 and TabLeft or TabRight),
+                Parent = Tab.SingleColumn and TabLeft or (Info.Side == 2 and TabRight or TabLeft),
             })
             New("UIListLayout", {
                 Padding = UDim.new(0, false and 2 or 6),
@@ -15099,6 +15099,18 @@ function Library:CreateWindow(WindowInfo)
             Tab:UpdateDisplayedInfo()
             TabContainer.Visible = true
             Tab:RefreshSides()
+            if not Tab._ColumnDiagnosticPrinted then
+                Tab._ColumnDiagnosticPrinted = true
+                task.defer(function()
+                    warn("[Zero Point Columns v2] tab=" .. tostring(Name)
+                        .. " mobile=" .. tostring(Library.IsMobile)
+                        .. " touch=" .. tostring(UserInputService.TouchEnabled)
+                        .. " enforced=" .. tostring(Tab.MobileTwoColumns)
+                        .. " single=" .. tostring(Tab.SingleColumn)
+                        .. " left=" .. tostring(math.floor(TabLeft.AbsoluteSize.X))
+                        .. " right=" .. tostring(math.floor(TabRight.AbsoluteSize.X)))
+                end)
+            end
             Library.ActiveTab = Tab
             if Library.Searching then
                 Library:UpdateSearch(Library.SearchText)
