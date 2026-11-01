@@ -13515,7 +13515,7 @@ function Library:CreateWindow(WindowInfo)
         Window:SetSidebarWidth(Window:GetSidebarWidth())
         for _, Tab in next, Library.Tabs do
             if typeof(Tab) == "table" and not Tab.IsKeyTab and typeof(Tab.SetSingleColumn) == "function" then
-                Tab:SetSingleColumn(TargetWidth - Window:GetSidebarWidth() < 470 or Tab.ManualSingleColumn == true, true)
+                Tab:SetSingleColumn(not Library.IsMobile and (TargetWidth - Window:GetSidebarWidth() < 470 or Tab.ManualSingleColumn == true), true)
             end
         end
         return true
@@ -14515,7 +14515,7 @@ function Library:CreateWindow(WindowInfo)
         end
 
         function Tab:SetSingleColumn(State, ResponsiveChange)
-            local NextState = State == true
+            local NextState = not Library.IsMobile and State == true
             if not ResponsiveChange then
                 Tab.ManualSingleColumn = NextState
             end
