@@ -377,7 +377,7 @@ local Library = {
 if RunService:IsStudio() then
     if UserInputService.TouchEnabled and not UserInputService.MouseEnabled then
         Library.IsMobile = true
-        Library.OriginalMinSize = Vector2.new(310, 205)
+        Library.OriginalMinSize = Vector2.new(480, 240)
     else
         Library.IsMobile = false
         Library.OriginalMinSize = Vector2.new(480, 360)
@@ -388,10 +388,7 @@ else
     end)
     Library.IsMobile = (Library.DevicePlatform == Enum.Platform.Android or Library.DevicePlatform == Enum.Platform.IOS)
         or (UserInputService.TouchEnabled and not UserInputService.KeyboardEnabled)
-    Library.OriginalMinSize = Library.IsMobile and Vector2.new(310, 205) or Vector2.new(480, 360)
-end
-if Library.IsMobile then
-    Library.UIDensity = "Compact"
+    Library.OriginalMinSize = Library.IsMobile and Vector2.new(480, 240) or Vector2.new(480, 360)
 end
 local Templates = {
     Frame = {
@@ -12415,10 +12412,8 @@ end
 
 function Library:GetMobileMenuDimensions(Viewport, PreferredSize)
     local Scale = math.clamp(tonumber(self.DPIScale) or 1, 0.5, 2)
-    local AvailableWidth = math.max(1, (Viewport.X - 64) / Scale)
-    local AvailableHeight = math.max(1, (Viewport.Y - 64) / Scale)
-    local MinimumWidth = math.min(self.OriginalMinSize.X, AvailableWidth)
-    local MinimumHeight = math.min(self.OriginalMinSize.Y, AvailableHeight)
+    local AvailableWidth = math.max(1, math.floor((Viewport.X - 64) / Scale))
+    local AvailableHeight = math.max(1, math.floor((Viewport.Y - 64) / Scale))
     local Width = PreferredSize.X
     local Height = PreferredSize.Y
     local Fraction = self:GetMobileMenuFraction(Viewport)
@@ -12426,6 +12421,8 @@ function Library:GetMobileMenuDimensions(Viewport, PreferredSize)
         Width = Viewport.X * Fraction / Scale
         Height = Viewport.Y * Fraction / Scale
     end
+    local MinimumWidth = math.min(480, AvailableWidth)
+    local MinimumHeight = math.min(240, AvailableHeight)
     return Vector2.new(
         math.floor(math.clamp(Width, MinimumWidth, AvailableWidth) + 0.5),
         math.floor(math.clamp(Height, MinimumHeight, AvailableHeight) + 0.5)
@@ -12451,6 +12448,14 @@ end
 
 function Library:CreateWindow(WindowInfo)
     WindowInfo = Library:Validate(WindowInfo, Templates.Window)
+    if Library.IsMobile then
+        WindowInfo.Size = UDim2.fromOffset(600, 520)
+        WindowInfo.SidebarCompacted = true
+        WindowInfo.MinContainerWidth = 256
+        WindowInfo.SidebarCompactWidth = 48
+        WindowInfo.MinSidebarWidth = 128
+        WindowInfo.EnableSidebarResize = false
+    end
 
     local CurrentCamera = workspace.CurrentCamera
 
@@ -12497,13 +12502,15 @@ function Library:CreateWindow(WindowInfo)
         WindowInfo.SidebarCompacted = WindowInfo.Compact
     end
     if Library.IsMobile then
+        WindowInfo.SidebarCompacted = true
+        WindowInfo.MinContainerWidth = 256
         WindowInfo.EnableSidebarResize = false
     end
     if WindowInfo.SidebarMinWidth ~= nil then
         WindowInfo.MinSidebarWidth = WindowInfo.SidebarMinWidth
     end
     WindowInfo.MinSidebarWidth = math.max(64, WindowInfo.MinSidebarWidth)
-    WindowInfo.SidebarCompactWidth = math.max(52, WindowInfo.SidebarCompactWidth)
+    WindowInfo.SidebarCompactWidth = math.max(Library.IsMobile and 48 or 52, WindowInfo.SidebarCompactWidth)
     WindowInfo.SidebarCollapseThreshold = math.clamp(WindowInfo.SidebarCollapseThreshold, 0.1, 0.9)
     WindowInfo.CompactWidthActivation = math.max(48, WindowInfo.CompactWidthActivation)
     Library.CornerRadius = WindowInfo.CornerRadius
@@ -12544,7 +12551,8 @@ function Library:CreateWindow(WindowInfo)
     local GradientOverlay
     local BottomBackground
     local FooterLabel
-    local InitialLeftWidth = math.clamp(math.floor(WindowInfo.Size.X.Offset * 0.265 + 0.5), 170, 210)
+    local InitialLeftWidth = Library.IsMobile and math.ceil(WindowInfo.Size.X.Offset * 0.3)
+        or math.clamp(math.floor(WindowInfo.Size.X.Offset * 0.265 + 0.5), 170, 210)
     local IsCompact = WindowInfo.SidebarCompacted
     local LastExpandedWidth = InitialLeftWidth
     do
@@ -12619,7 +12627,7 @@ function Library:CreateWindow(WindowInfo)
         Library.MobileMainFrameScale = Library.IsMobile and MainFrameScale or nil
         Library:AddOutline(MainFrame)
         Library:MakeLine(MainFrame, {
-            Position = UDim2.fromOffset(0, Library.IsMobile and 43 or 52),
+            Position = UDim2.fromOffset(0, Library.IsMobile and 48 or 52),
             Size = UDim2.new(1, 0, 0, 1),
         })
         Glow = New("ImageLabel", {
@@ -12701,7 +12709,7 @@ function Library:CreateWindow(WindowInfo)
         end
         local TopBar = New("Frame", {
             BackgroundTransparency = 1,
-            Size = UDim2.new(1, 0, 0, Library.IsMobile and 44 or 52),
+            Size = UDim2.new(1, 0, 0, Library.IsMobile and 48 or 52),
             Parent = MainFrame,
         })
         Library:MakeDraggable(MainFrame, TopBar, false, true)
@@ -12765,8 +12773,8 @@ function Library:CreateWindow(WindowInfo)
         RightWrapper = New("Frame", {
             AnchorPoint = Vector2.new(1, 0.5),
             BackgroundTransparency = 1,
-            Position = UDim2.new(1, Library.IsMobile and -108 or -71, 0.5, 0),
-            Size = UDim2.new(1, -InitialLeftWidth - (Library.IsMobile and 116 or 80), 1, -12),
+            Position = UDim2.new(1, -71, 0.5, 0),
+            Size = UDim2.new(1, -InitialLeftWidth - 80, 1, -12),
             Parent = TopBar,
         })
         New("UIListLayout", {
@@ -13133,7 +13141,7 @@ function Library:CreateWindow(WindowInfo)
             Position = UDim2.fromScale(0, 1),
             Size = UDim2.new(1, 0, 0, 20 + WindowInfo.CornerRadius),
             ZIndex = 1,
-            Visible = not Library.IsMobile,
+            Visible = true,
             Parent = MainFrame
         })
         BottomBackground:SetAttribute("ZeroPointBackgroundHost", true)
@@ -13141,14 +13149,14 @@ function Library:CreateWindow(WindowInfo)
             AnchorPoint = Vector2.new(0, 1),
             Position = UDim2.new(0, 0, 1, -20),
             Size = UDim2.new(1, 0, 0, 1),
-            Visible = not Library.IsMobile,
+            Visible = true,
         })
         local BottomBar = New("Frame", {
             AnchorPoint = Vector2.new(0, 1),
             BackgroundTransparency = 1,
             Position = UDim2.fromScale(0, 1),
             Size = UDim2.new(1, 0, 0, 20),
-            Visible = not Library.IsMobile,
+            Visible = true,
             Parent = MainFrame,
         })
         table.insert(
@@ -13199,12 +13207,12 @@ function Library:CreateWindow(WindowInfo)
             BackgroundColor3 = "BackgroundColor",
             CanvasSize = UDim2.fromScale(0, 0),
             ZIndex = 1,
-            Position = UDim2.fromOffset(0, Library.IsMobile and 45 or 53),
+            Position = UDim2.fromOffset(0, Library.IsMobile and 49 or 53),
             ScrollBarImageColor3 = "AccentColor",
             ScrollBarImageTransparency = 0.2,
             ScrollBarThickness = Library.IsMobile and 4 or 6,
             ScrollingDirection = Enum.ScrollingDirection.Y,
-            Size = UDim2.new(0, InitialLeftWidth, 1, Library.IsMobile and -47 or -77),
+            Size = UDim2.new(0, InitialLeftWidth, 1, Library.IsMobile and -70 or -77),
             Parent = MainFrame,
         })
         Tabs:SetAttribute("ZeroPointBackgroundHost", true)
@@ -13227,8 +13235,8 @@ function Library:CreateWindow(WindowInfo)
             end,
             Name = "Container",
             ZIndex = 1,
-            Position = UDim2.new(1, 0, 0, Library.IsMobile and 45 or 53),
-            Size = UDim2.new(1, -InitialLeftWidth - 1, 1, Library.IsMobile and -47 or -77),
+            Position = UDim2.new(1, 0, 0, Library.IsMobile and 49 or 53),
+            Size = UDim2.new(1, -InitialLeftWidth - 1, 1, Library.IsMobile and -70 or -77),
             Parent = MainFrame,
         })
         Container:SetAttribute("ZeroPointBackgroundHost", true)
@@ -13252,8 +13260,8 @@ function Library:CreateWindow(WindowInfo)
             AnchorPoint = Vector2.new(1, 0.5),
             BackgroundColor3 = "MainColor",
             BackgroundTransparency = 0.1,
-            Position = UDim2.new(1, Library.IsMobile and -60 or -29, 0, Library.IsMobile and 22 or 26),
-            Size = UDim2.fromOffset(Library.IsMobile and 38 or 29, Library.IsMobile and 38 or 29),
+            Position = UDim2.new(1, -29, 0, Library.IsMobile and 24 or 26),
+            Size = UDim2.fromOffset(29, 29),
             FontFace = Font.fromEnum(Enum.Font.GothamBold),
             Text = "⚙",
             TextSize = 18,
@@ -13268,7 +13276,7 @@ function Library:CreateWindow(WindowInfo)
             Name = "QuickSettingsPanel",
             AnchorPoint = Vector2.new(1, 0),
             BackgroundColor3 = "MainColor",
-            Position = UDim2.new(1, -12, 0, Library.IsMobile and 43 or 48),
+            Position = UDim2.new(1, -12, 0, 48),
             Size = UDim2.fromOffset(220, 177),
             Visible = false,
             ZIndex = 1500,
@@ -13535,9 +13543,9 @@ function Library:CreateWindow(WindowInfo)
 
         DividerLine.Position = UDim2.fromOffset(Width, 0)
         TitleHolder.Size = UDim2.new(0, Width, 1, 0)
-        RightWrapper.Size = UDim2.new(1, -Width - (Library.IsMobile and 116 or 80), 1, -12)
-        Tabs.Size = UDim2.new(0, Width, 1, Library.IsMobile and -47 or -77)
-        Container.Size = UDim2.new(1, -Width - 1, 1, Library.IsMobile and -47 or -77)
+        RightWrapper.Size = UDim2.new(1, -Width - 80, 1, -12)
+        Tabs.Size = UDim2.new(0, Width, 1, Library.IsMobile and -70 or -77)
+        Container.Size = UDim2.new(1, -Width - 1, 1, Library.IsMobile and -70 or -77)
         if WindowInfo.EnableCompacting then
             ApplyCompact()
         end
@@ -13592,55 +13600,42 @@ function Library:CreateWindow(WindowInfo)
         local ViewportChanged = Viewport ~= LastResponsiveViewport
         LastResponsiveViewport = Viewport
         local TargetSize = Library:GetMobileMenuDimensions(Viewport, MobilePreferredWindowSize)
-        local DesiredSize = UDim2.fromOffset(TargetSize.X, TargetSize.Y)
-        local SizeChanged = MainFrame.Size ~= DesiredSize
+        local TargetUDim = UDim2.fromOffset(TargetSize.X, TargetSize.Y)
+        local SizeChanged = MainFrame.Size ~= TargetUDim
         if SizeChanged then
-            MainFrame.Size = DesiredSize
+            MainFrame.Size = TargetUDim
         end
-        if MainFrame.AnchorPoint ~= Vector2.new(0.5, 0.5) then
-            MainFrame.AnchorPoint = Vector2.new(0.5, 0.5)
-        end
+        MainFrame.AnchorPoint = Vector2.new(0.5, 0.5)
         if ViewportChanged then
             MainFrame.Position = UDim2.fromScale(0.5, 0.5)
         end
 
         local Scale = math.clamp(tonumber(Library.DPIScale) or 1, 0.5, 2)
         Library.MinSize = Vector2.new(
-            math.min(Library.OriginalMinSize.X, (Viewport.X - 64) / Scale),
-            math.min(Library.OriginalMinSize.Y, (Viewport.Y - 64) / Scale)
+            math.min(480, math.max(1, math.floor((Viewport.X - 64) / Scale))),
+            math.min(240, math.max(1, math.floor((Viewport.Y - 64) / Scale)))
         )
-        local CurrentSidebarWidth = Window:GetSidebarWidth()
-        local MaximumSidebar = math.max(
-            WindowInfo.SidebarCompactWidth,
-            TargetSize.X - WindowInfo.MinContainerWidth - 1
-        )
-        local NeedsCompactSidebar = TargetSize.X < (WindowInfo.MinSidebarWidth + WindowInfo.MinContainerWidth + 1)
-        if NeedsCompactSidebar and CurrentSidebarWidth ~= WindowInfo.SidebarCompactWidth then
+        if Window:GetSidebarWidth() ~= WindowInfo.SidebarCompactWidth then
             Window:SetSidebarWidth(WindowInfo.SidebarCompactWidth)
-        elseif CurrentSidebarWidth > MaximumSidebar then
-            Window:SetSidebarWidth(MaximumSidebar)
-        end
-
-        local ContentWidth = TargetSize.X - Window:GetSidebarWidth() - 1
-        local UseSingleColumn = ContentWidth < 650
-        for _, Tab in next, Library.Tabs do
-            if typeof(Tab) == "table" and typeof(Tab.SetSingleColumn) == "function" then
-                local Desired = UseSingleColumn or Tab.ManualSingleColumn == true
-                if Tab.SingleColumn ~= Desired then
-                    Tab:SetSingleColumn(Desired, true)
-                elseif ViewportChanged or SizeChanged then
-                    Tab:RefreshSides()
-                end
-            end
         end
         if ViewportChanged or SizeChanged then
+            for _, Tab in next, Library.Tabs do
+                if typeof(Tab) == "table" and typeof(Tab.SetSingleColumn) == "function" then
+                    local Desired = Tab.ManualSingleColumn == true
+                    if Tab.SingleColumn ~= Desired then
+                        Tab:SetSingleColumn(Desired, true)
+                    else
+                        Tab:RefreshSides()
+                    end
+                end
+            end
             for _, Option in next, Options do
                 if Option.Type == "Dropdown" and typeof(Option.RecalculateListSize) == "function" then
                     Option:RecalculateListSize()
                 end
             end
         end
-        if FeatureSearchPanel and SearchBox and FeatureSearchPanel.Visible then
+        if FeatureSearchPanel and FeatureSearchPanel.Visible then
             FeatureSearchPanel.Size = UDim2.new(1, 0, 0, math.min(260, math.max(100, TargetSize.Y - 65)))
         end
     end
@@ -13655,9 +13650,6 @@ function Library:CreateWindow(WindowInfo)
         end)
     end
     function Window:RefreshMobileLayout(ResetPreferredSize)
-        if ResetPreferredSize then
-            LastResponsiveViewport = Vector2.zero
-        end
         QueueMobileLayout()
     end
     function Window:AddTab(...)
@@ -13692,7 +13684,7 @@ function Library:CreateWindow(WindowInfo)
             TabButton = New("TextButton", {
                 BackgroundColor3 = "MainColor",
                 BackgroundTransparency = 1,
-                Size = UDim2.new(1, 0, 0, Library.IsMobile and 32 or 42),
+                Size = UDim2.new(1, 0, 0, 42),
                 Text = "",
                 Parent = Tabs,
             })
@@ -17988,7 +17980,7 @@ function Library:LoadSettingsTab(Window, SettingsInfo)
     })
 
     if Library.IsMobile then
-        MenuGroup:AddLabel("Auto uses the original compact window size, fitted to the screen. Select 25%-100% for a custom size.")
+        MenuGroup:AddLabel("Auto uses the original 600x520 mobile window, fitted to the screen. Select 25%-100% for a custom size.")
     end
     MenuGroup:AddDropdown("UISettingsMobileMenuSize", {
         Text = "Mobile Menu Size",
@@ -18088,7 +18080,7 @@ function Library:LoadSettingsTab(Window, SettingsInfo)
         else
             Window:SetCompact(false)
         end
-        local DefaultDensity = Library.IsMobile and "Compact" or "Comfortable"
+        local DefaultDensity = "Comfortable"
         Library:SetUIDensity(DefaultDensity)
         Library:SetDPIScale(100)
         if Options.UISettingsDensity then
