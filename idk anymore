@@ -3922,9 +3922,9 @@ do
             Type = "KeyPicker",
         }
         if KeyPicker.Value == "MB1" and not KeyPicker.AllowMB1 then
-            KeyPicker.Value = "None"
+            KeyPicker.Value = Idx == "MenuKeybind" and "RightControl" or "None"
             KeyPicker.Modifiers = {}
-            KeyPicker.DisplayValue = "None"
+            KeyPicker.DisplayValue = KeyPicker.Value
         end
         if KeyPicker.Mode == "Press" then
             assert(ParentObj.Type == "Label", "KeyPicker with the mode 'Press' can be only applied on Labels.")
@@ -4237,7 +4237,7 @@ do
         function KeyPicker:SetValue(Data)
             local Key, Mode, Modifiers = Data[1], Data[2], Data[3]
             if Key == "MB1" and not KeyPicker.AllowMB1 then
-                Key = "None"
+                Key = Idx == "MenuKeybind" and "RightControl" or "None"
                 Modifiers = {}
             end
             local IsKeyValid, KeyCode = pcall(function()
@@ -16931,7 +16931,7 @@ function Library:CreateWindow(WindowInfo)
         local Bind = Library.ToggleKeybind
         local Matching = false
         if typeof(Bind) == "table" and Bind.Type == "KeyPicker" then
-            if Bind.Value == "None" or Bind.Value == "Unknown" then
+            if Bind.Value == "None" or Bind.Value == "Unknown" or (Bind.Value == "MB1" and not Bind.AllowMB1) then
                 return
             end
             Matching = Input.KeyCode.Name == Bind.Value or MenuMouseBinds[Bind.Value] == Input.UserInputType
@@ -18076,7 +18076,7 @@ function Library:LoadSettingsTab(Window, SettingsInfo)
     MenuGroup:AddLabel("Menu bind"):AddKeyPicker("MenuKeybind", {
         Default = Library.ToggleKeybind and Library.ToggleKeybind.Name or "RightControl",
         NoUI = true,
-        AllowMB1 = true,
+        AllowMB1 = false,
         Text = "Menu keybind",
     })
 
