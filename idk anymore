@@ -2835,29 +2835,44 @@ function Library:MakeDraggable(
     local DragDistance = 0
     local LastDragEnded = 0
     local Changed
+    local PendingPosition
     local DragController = {}
+
     local function DraggingAllowed(): boolean
         return not CanDrag or CanDrag()
     end
+
+    local function UpdatePosition(Position)
+        if not Position or not StartPos or not FramePos or not UI.Parent then return end
+        local Delta = Position - StartPos
+        DragDistance = Delta.Magnitude
+        local NextPosition = UDim2.new(FramePos.X.Scale, FramePos.X.Offset + Delta.X, FramePos.Y.Scale, FramePos.Y.Offset + Delta.Y)
+        if UI.Position ~= NextPosition then UI.Position = NextPosition end
+    end
+
+    if IsMainWindow then
+        Library:GiveSignal(RunService.RenderStepped:Connect(function()
+            if Dragging and PendingPosition then
+                UpdatePosition(PendingPosition)
+                PendingPosition = nil
+            end
+        end))
+    end
+
     DragFrame.InputBegan:Connect(function(Input: InputObject)
-        if
-            not IsClickInput(Input)
-            or IsMainWindow and Library.CantDragForced
-            or not DraggingAllowed()
-        then
+        if not IsClickInput(Input) or IsMainWindow and Library.CantDragForced or not DraggingAllowed() then
             return
         end
         StartPos = Input.Position
         FramePos = UI.Position
         DragDistance = 0
+        PendingPosition = nil
         Dragging = true
         Changed = Input.Changed:Connect(function()
-            if Input.UserInputState ~= Enum.UserInputState.End then
-                return
-            end
-            if DragDistance >= 6 then
-                LastDragEnded = tick()
-            end
+            if Input.UserInputState ~= Enum.UserInputState.End and Input.UserInputState ~= Enum.UserInputState.Cancel then return end
+            if IsMainWindow and PendingPosition then UpdatePosition(PendingPosition) end
+            PendingPosition = nil
+            if DragDistance >= 6 then LastDragEnded = tick() end
             Dragging = false
             if Changed and Changed.Connected then
                 Changed:Disconnect()
@@ -2865,14 +2880,15 @@ function Library:MakeDraggable(
             end
         end)
     end)
+
     Library:GiveSignal(UserInputService.InputChanged:Connect(function(Input: InputObject)
-        if
-            (not IgnoreToggled and not Library.Toggled)
+        if (not IgnoreToggled and not Library.Toggled)
             or (IsMainWindow and Library.CantDragForced)
             or not DraggingAllowed()
             or not (ScreenGui and ScreenGui.Parent)
         then
             Dragging = false
+            PendingPosition = nil
             if Changed and Changed.Connected then
                 Changed:Disconnect()
                 Changed = nil
@@ -2880,12 +2896,14 @@ function Library:MakeDraggable(
             return
         end
         if Dragging and IsHoverInput(Input) then
-            local Delta = Input.Position - StartPos
-            DragDistance = Delta.Magnitude
-            UI.Position =
-                UDim2.new(FramePos.X.Scale, FramePos.X.Offset + Delta.X, FramePos.Y.Scale, FramePos.Y.Offset + Delta.Y)
+            if IsMainWindow then
+                PendingPosition = Input.Position
+            else
+                UpdatePosition(Input.Position)
+            end
         end
     end))
+
     function DragController:ConsumeDrag(): boolean
         if tick() - LastDragEnded <= 0.25 then
             LastDragEnded = 0
@@ -2930,45 +2948,38 @@ function Library:MakeDragScrollable(ScrollingFrame: ScrollingFrame)
     local function IsInteractiveAtPosition(Frame: ScrollingFrame, Position: Vector2): boolean
         local ScrollBarWidth = Frame.ScrollBarThickness
         local RightEdge = Frame.AbsolutePosition.X + Frame.AbsoluteSize.X
-
         if ScrollBarWidth > 0 and Position.X >= RightEdge - ScrollBarWidth - 2 then
             return true
         end
 
-        for _, Gui in Frame:GetDescendants() do
-            if
-                Gui:IsA("GuiObject")
-                and Gui.Visible
-                and IsEffectivelyVisible(Gui)
-                and Gui.AbsoluteSize.X > 0
-                and Gui.AbsoluteSize.Y > 0
-                and Library:MouseIsOverFrame(Gui, Position)
-                and (Gui:IsA("GuiButton") or Gui:IsA("TextBox") or Gui.Active)
-            then
-                return true
+        local function IsBlockingAtPoint(Gui)
+            if not Gui:IsA("GuiObject") or not (Gui:IsA("GuiButton") or Gui:IsA("TextBox") or Gui.Active) then
+                return false
             end
+            if not Gui.Visible or Gui.AbsoluteSize.X <= 0 or Gui.AbsoluteSize.Y <= 0 then
+                return false
+            end
+            if not Library:MouseIsOverFrame(Gui, Position) then
+                return false
+            end
+            return IsEffectivelyVisible(Gui)
         end
 
+        for _, Gui in Frame:GetDescendants() do
+            if IsBlockingAtPoint(Gui) then return true end
+        end
         for _, Gui in ScreenGui:GetDescendants() do
-            if
-                Gui:IsA("GuiObject")
+            if Gui:IsA("GuiObject")
+                and Gui.ZIndex >= Frame.ZIndex
+                and IsBlockingAtPoint(Gui)
                 and not Gui:IsDescendantOf(Frame)
                 and not Frame:IsDescendantOf(Gui)
-                and Gui.Visible
-                and IsEffectivelyVisible(Gui)
-                and Gui.ZIndex >= Frame.ZIndex
-                and Gui.AbsoluteSize.X > 0
-                and Gui.AbsoluteSize.Y > 0
-                and Library:MouseIsOverFrame(Gui, Position)
-                and (Gui:IsA("GuiButton") or Gui:IsA("TextBox") or Gui.Active)
             then
                 return true
             end
         end
-
         return false
     end
-
     Library:GiveSignal(UserInputService.InputBegan:Connect(function(Input: InputObject)
         if
             Input.UserInputType ~= Enum.UserInputType.MouseButton1
@@ -3052,46 +3063,103 @@ end
 function Library:MakeResizable(UI: GuiObject, DragFrame: GuiObject, Callback: () -> ()?)
     local StartPos
     local FrameSize
+    local PendingPosition
     local Dragging = false
+    local DragInput
     local Changed
-    DragFrame.InputBegan:Connect(function(Input: InputObject)
-        if not IsClickInput(Input) then
+    local DidResize = false
+
+    local function ApplyPendingResize()
+        if not Dragging or not PendingPosition or not UI.Parent then
             return
         end
-        StartPos = Input.Position
-        FrameSize = UI.Size
-        Dragging = true
-        Changed = Input.Changed:Connect(function()
-            if Input.UserInputState ~= Enum.UserInputState.End then
-                return
-            end
-            Dragging = false
-            if Changed and Changed.Connected then
-                Changed:Disconnect()
-                Changed = nil
+        local Delta = PendingPosition - StartPos
+        local NewSize = UDim2.new(
+            FrameSize.X.Scale,
+            math.clamp(FrameSize.X.Offset + Delta.X, Library.MinSize.X, math.huge),
+            FrameSize.Y.Scale,
+            math.clamp(FrameSize.Y.Offset + Delta.Y, Library.MinSize.Y, math.huge)
+        )
+        if UI.Size ~= NewSize then
+            UI.Size = NewSize
+            DidResize = true
+        end
+    end
+
+    local function FlushDeferredLabels()
+        local Pending = Library.ResizePendingLabelUpdates
+        Library.ResizePendingLabelUpdates = nil
+        if not Pending then return end
+        task.spawn(function()
+            for Update in pairs(Pending) do
+                if Library.Unloaded then return end
+                pcall(Update)
+                task.wait()
             end
         end)
-    end)
-    Library:GiveSignal(UserInputService.InputChanged:Connect(function(Input: InputObject)
-        if not UI.Visible or not (ScreenGui and ScreenGui.Parent) then
-            Dragging = false
-            if Changed and Changed.Connected then
-                Changed:Disconnect()
-                Changed = nil
+    end
+
+    local function FinishResize()
+        if not Dragging then return end
+        ApplyPendingResize()
+        Dragging = false
+        DragInput = nil
+        PendingPosition = nil
+        Library.ResizeInteractionActive = false
+        if Changed then
+            Changed:Disconnect()
+            Changed = nil
+        end
+        if DidResize and Callback then
+            task.defer(function()
+                if not Library.Unloaded and UI.Parent then
+                    Library:SafeCallback(Callback)
+                end
+                FlushDeferredLabels()
+            end)
+        else
+            FlushDeferredLabels()
+        end
+    end
+
+    Library:GiveSignal(DragFrame.InputBegan:Connect(function(Input: InputObject)
+        if not IsClickInput(Input) or Dragging then return end
+        StartPos = Input.Position
+        FrameSize = UI.Size
+        PendingPosition = StartPos
+        DragInput = Input
+        DidResize = false
+        Dragging = true
+        Library.ResizeInteractionActive = true
+        Changed = Input.Changed:Connect(function()
+            if Input.UserInputState == Enum.UserInputState.End or Input.UserInputState == Enum.UserInputState.Cancel then
+                FinishResize()
             end
+        end)
+    end))
+
+    Library:GiveSignal(UserInputService.InputChanged:Connect(function(Input: InputObject)
+        if not Dragging then return end
+        if not UI.Visible or not (ScreenGui and ScreenGui.Parent) then
+            FinishResize()
             return
         end
-        if Dragging and IsHoverInput(Input) then
-            local Delta = Input.Position - StartPos
-            UI.Size = UDim2.new(
-                FrameSize.X.Scale,
-                math.clamp(FrameSize.X.Offset + Delta.X, Library.MinSize.X, math.huge),
-                FrameSize.Y.Scale,
-                math.clamp(FrameSize.Y.Offset + Delta.Y, Library.MinSize.Y, math.huge)
-            )
-            if Callback then
-                Library:SafeCallback(Callback)
-            end
+        if DragInput and DragInput.UserInputType == Enum.UserInputType.Touch then
+            if Input ~= DragInput then return end
+        elseif Input.UserInputType ~= Enum.UserInputType.MouseMovement then
+            return
+        end
+        PendingPosition = Input.Position
+    end))
+
+    Library:GiveSignal(RunService.RenderStepped:Connect(function()
+        if Dragging then ApplyPendingResize() end
+    end))
+
+    Library:GiveSignal(UserInputService.InputEnded:Connect(function(Input: InputObject)
+        if not Dragging then return end
+        if Input == DragInput or (DragInput and DragInput.UserInputType == Enum.UserInputType.MouseButton1 and Input.UserInputType == Enum.UserInputType.MouseButton1) then
+            FinishResize()
         end
     end))
 end
@@ -5103,6 +5171,11 @@ do
             end
         end
         local function QueueLabelResize()
+            if Library.ResizeInteractionActive then
+                Library.ResizePendingLabelUpdates = Library.ResizePendingLabelUpdates or {}
+                Library.ResizePendingLabelUpdates[UpdateLabelSize] = true
+                return
+            end
             if LabelResizeQueued then
                 return
             end
@@ -13464,11 +13537,15 @@ function Library:CreateWindow(WindowInfo)
             Button.Icon.SizeConstraint = IsCompact and Enum.SizeConstraint.RelativeXY or Enum.SizeConstraint.RelativeYY
         end
     end
-    local function ApplyCompact()
-        IsCompact = Window:GetSidebarWidth() == WindowInfo.SidebarCompactWidth
+    local CompactLayoutApplied = false
+    local function ApplyCompact(Force)
+        local NextCompact = Window:GetSidebarWidth() == WindowInfo.SidebarCompactWidth
         if WindowInfo.DisableCompactingSnap then
-            IsCompact = Window:GetSidebarWidth() <= WindowInfo.CompactWidthActivation
+            NextCompact = Window:GetSidebarWidth() <= WindowInfo.CompactWidthActivation
         end
+        if NextCompact == IsCompact and not Force and CompactLayoutApplied then return end
+        CompactLayoutApplied = true
+        IsCompact = NextCompact
         WindowTitle.Visible = not IsCompact
         if not WindowInfo.Icon then
             WindowIcon.Visible = IsCompact
@@ -13496,7 +13573,7 @@ function Library:CreateWindow(WindowInfo)
         elseif OldStyle ~= Style then
             Window:SetSidebarWidth(Window.OriginalSidebarWidth or LastExpandedWidth)
         end
-        ApplyCompact()
+        ApplyCompact(true)
         return true
     end
     function Window:IsSidebarCompacted()
@@ -13520,7 +13597,8 @@ function Library:CreateWindow(WindowInfo)
 
         local MaxWidth = FrameWidth - WindowInfo.MinContainerWidth - 1
         MaxWidth = math.max(MinWidth, MaxWidth)
-        Width = math.clamp(Width, MinWidth, MaxWidth)
+        Width = math.floor(math.clamp(Width, MinWidth, MaxWidth) + 0.5)
+        if Tabs.Size.X.Offset == Width then return end
 
         DividerLine.Position = UDim2.fromOffset(Width, 0)
         TitleHolder.Size = UDim2.new(0, Width, 1, 0)
