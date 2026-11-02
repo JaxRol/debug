@@ -593,6 +593,7 @@ local Templates = {
         Text = "KeyPicker",
         Default = "None",
         DefaultModifiers = {},
+        AllowMB1 = false,
         Blacklisted = {},
         BlacklistedModifiers = {},
         Whitelisted = {},
@@ -3906,6 +3907,7 @@ do
             Value = Info.Default,
             Modifiers = Info.DefaultModifiers,
             DisplayValue = Info.Default,
+            AllowMB1 = Info.AllowMB1 == true,
             Blacklisted = Info.Blacklisted,
             BlacklistedModifiers = Info.BlacklistedModifiers,
             Whitelisted = Info.Whitelisted,
@@ -3919,6 +3921,11 @@ do
             Clicked = Info.Clicked,
             Type = "KeyPicker",
         }
+        if KeyPicker.Value == "MB1" and not KeyPicker.AllowMB1 then
+            KeyPicker.Value = "None"
+            KeyPicker.Modifiers = {}
+            KeyPicker.DisplayValue = "None"
+        end
         if KeyPicker.Mode == "Press" then
             assert(ParentObj.Type == "Label", "KeyPicker with the mode 'Press' can be only applied on Labels.")
             KeyPicker.SyncToggleState = false
@@ -4195,6 +4202,9 @@ do
                 if not AreModifiersHeld(KeyPicker.Modifiers) then
                     return false
                 end
+                if Key == "MB1" and not KeyPicker.AllowMB1 then
+                    return false
+                end
                 if SpecialKeys[Key] ~= nil then
                     return UserInputService:IsMouseButtonPressed(SpecialKeys[Key])
                         and not UserInputService:GetFocusedTextBox()
@@ -4226,6 +4236,10 @@ do
         end
         function KeyPicker:SetValue(Data)
             local Key, Mode, Modifiers = Data[1], Data[2], Data[3]
+            if Key == "MB1" and not KeyPicker.AllowMB1 then
+                Key = "None"
+                Modifiers = {}
+            end
             local IsKeyValid, KeyCode = pcall(function()
                 if Key == "None" then
                     Key = nil
@@ -4318,6 +4332,9 @@ do
                 FinishCapture()
             end
             local function IsAllowed(KeyName, IsModifier)
+                if KeyName == "MB1" and not KeyPicker.AllowMB1 then
+                    return false
+                end
                 if IsModifier then
                     if #KeyPicker.WhitelistedModifiers > 0 and not table.find(KeyPicker.WhitelistedModifiers, KeyName) then
                         return false
@@ -4404,6 +4421,7 @@ do
                 KeyPicker.Mode == "Always"
                 or KeyPicker.Value == "Unknown"
                 or KeyPicker.Value == "None"
+                or (KeyPicker.Value == "MB1" and not KeyPicker.AllowMB1)
                 or Picking
                 or Library.KeybindCaptureOwner ~= nil
                 or UserInputService:GetFocusedTextBox()
@@ -4442,6 +4460,7 @@ do
             if
                 KeyPicker.Value == "Unknown"
                 or KeyPicker.Value == "None"
+                or (KeyPicker.Value == "MB1" and not KeyPicker.AllowMB1)
                 or Picking
                 or Library.KeybindCaptureOwner ~= nil
                 or UserInputService:GetFocusedTextBox()
@@ -18057,6 +18076,7 @@ function Library:LoadSettingsTab(Window, SettingsInfo)
     MenuGroup:AddLabel("Menu bind"):AddKeyPicker("MenuKeybind", {
         Default = Library.ToggleKeybind and Library.ToggleKeybind.Name or "RightControl",
         NoUI = true,
+        AllowMB1 = true,
         Text = "Menu keybind",
     })
 
