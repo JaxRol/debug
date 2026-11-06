@@ -8107,7 +8107,7 @@ do
             BackgroundColor3 = "BackgroundColor",
             BackgroundTransparency = 0.25,
             BorderSizePixel = 0,
-            ClipDescendants = true,
+            ClipsDescendants = true,
             Position = UDim2.fromOffset(43, 30),
             Size = UDim2.new(1, -52, 1, -54),
             Parent = Box,
