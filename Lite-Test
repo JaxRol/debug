@@ -1,0 +1,732 @@
+local Players = game:GetService("Players")
+local UserInputService = game:GetService("UserInputService")
+local TweenService = game:GetService("TweenService")
+local CoreGui = game:GetService("CoreGui")
+
+local Player = Players.LocalPlayer
+local Environment = type(getgenv) == "function" and getgenv() or shared
+if type(Environment.ZeroPointLite) == "table" and type(Environment.ZeroPointLite.Unload) == "function" then
+    pcall(function() Environment.ZeroPointLite:Unload() end)
+end
+local Library = {}
+Library.Windows = {}
+Library.Toggles = {}
+Library.Options = {}
+Library.Themes = {
+    Obsidian = { Shell = Color3.fromRGB(16, 17, 21), Surface = Color3.fromRGB(27, 29, 35), Raised = Color3.fromRGB(37, 39, 48), Accent = Color3.fromRGB(230, 74, 154), Track = Color3.fromRGB(69, 57, 79), Text = Color3.fromRGB(242, 243, 247), Muted = Color3.fromRGB(164, 163, 179), Label = Color3.fromRGB(240, 133, 191), Gold = Color3.fromRGB(244, 183, 85) },
+    Violet = { Shell = Color3.fromRGB(16, 13, 29), Surface = Color3.fromRGB(30, 26, 51), Raised = Color3.fromRGB(40, 32, 64), Accent = Color3.fromRGB(152, 111, 248), Track = Color3.fromRGB(64, 55, 96), Text = Color3.fromRGB(244, 240, 253), Muted = Color3.fromRGB(171, 161, 192), Label = Color3.fromRGB(177, 146, 255), Gold = Color3.fromRGB(241, 181, 79) },
+    Ocean = { Shell = Color3.fromRGB(10, 18, 27), Surface = Color3.fromRGB(20, 33, 45), Raised = Color3.fromRGB(27, 44, 58), Accent = Color3.fromRGB(76, 190, 238), Track = Color3.fromRGB(44, 67, 82), Text = Color3.fromRGB(237, 246, 250), Muted = Color3.fromRGB(153, 177, 186), Label = Color3.fromRGB(110, 205, 243), Gold = Color3.fromRGB(241, 181, 79) },
+    Rose = { Shell = Color3.fromRGB(27, 12, 23), Surface = Color3.fromRGB(45, 25, 41), Raised = Color3.fromRGB(60, 33, 53), Accent = Color3.fromRGB(243, 131, 180), Track = Color3.fromRGB(92, 52, 76), Text = Color3.fromRGB(253, 238, 247), Muted = Color3.fromRGB(195, 153, 177), Label = Color3.fromRGB(245, 149, 194), Gold = Color3.fromRGB(241, 181, 79) }
+}
+Library.ThemeName = "Obsidian"
+Library.Theme = Library.Themes.Obsidian
+Library.Connections = {}
+Library.Paints = {}
+Library.Refreshers = {}
+
+local function make(ClassName, Properties, Parent)
+    local Object = Instance.new(ClassName)
+    for Key, Value in pairs(Properties or {}) do
+        Object[Key] = Value
+    end
+    Object.Parent = Parent
+    return Object
+end
+
+local function rounded(Object, Radius)
+    return make("UICorner", { CornerRadius = UDim.new(0, Radius or 7) }, Object)
+end
+
+local function pad(Object, Left, Right, Top, Bottom)
+    return make("UIPadding", {
+        PaddingLeft = UDim.new(0, Left or 0),
+        PaddingRight = UDim.new(0, Right or 0),
+        PaddingTop = UDim.new(0, Top or 0),
+        PaddingBottom = UDim.new(0, Bottom or 0)
+    }, Object)
+end
+
+local function stack(Object, Gap, Direction)
+    return make("UIListLayout", {
+        SortOrder = Enum.SortOrder.LayoutOrder,
+        FillDirection = Direction or Enum.FillDirection.Vertical,
+        Padding = UDim.new(0, Gap or 0)
+    }, Object)
+end
+
+local function paint(Object, Property, ThemeKey)
+    Object[Property] = Library.Theme[ThemeKey]
+    table.insert(Library.Paints, { Object = Object, Property = Property, Key = ThemeKey })
+    return Object
+end
+
+local function label(Parent, Text, Size, ColorKey, Height, Bold)
+    local Item = make("TextLabel", {
+        BackgroundTransparency = 1,
+        Text = tostring(Text or ""),
+        Font = Bold and Enum.Font.GothamBold or Enum.Font.Gotham,
+        TextSize = Size or 12,
+        TextXAlignment = Enum.TextXAlignment.Left,
+        TextYAlignment = Enum.TextYAlignment.Center,
+        TextWrapped = true,
+        Size = UDim2.new(1, 0, 0, Height or 20),
+        BorderSizePixel = 0
+    }, Parent)
+    paint(Item, "TextColor3", ColorKey or "Text")
+    return Item
+end
+
+local function hook(Connection)
+    table.insert(Library.Connections, Connection)
+    return Connection
+end
+
+local function safeCall(Callback, ...)
+    if type(Callback) == "function" then
+        local Ok, Error = pcall(Callback, ...)
+        if not Ok then
+            warn("ZeroPoint Lite callback: " .. tostring(Error))
+        end
+    end
+end
+
+function Library:SetThemePreset(Name)
+    if not self.Themes[Name] then
+        return false
+    end
+    self.ThemeName = Name
+    self.Theme = self.Themes[Name]
+    for _, Entry in ipairs(self.Paints) do
+        if Entry.Object.Parent then
+            Entry.Object[Entry.Property] = self.Theme[Entry.Key]
+        end
+    end
+    for _, Refresh in ipairs(self.Refreshers) do
+        Refresh()
+    end
+    return true
+end
+
+function Library:Unload()
+    for _, Connection in ipairs(self.Connections) do
+        Connection:Disconnect()
+    end
+    for _, Window in ipairs(self.Windows) do
+        if Window.ScreenGui then
+            Window.ScreenGui:Destroy()
+        end
+    end
+    table.clear(self.Connections)
+    table.clear(self.Paints)
+    table.clear(self.Refreshers)
+    table.clear(self.Windows)
+    table.clear(self.Toggles)
+    table.clear(self.Options)
+end
+
+function Library:CreateWindow(Info)
+    Info = Info or {}
+    local Window = { Tabs = {}, ScreenGui = nil, Minimized = false, Visible = true }
+    local Camera = workspace.CurrentCamera
+    local View = Camera and Camera.ViewportSize or Vector2.new(900, 600)
+    local Width = math.min(Info.Width or 306, math.max(240, View.X - 16))
+    local Height = math.min(Info.Height or 510, math.max(280, View.Y - 22))
+
+    local ParentGui
+    local Success, Result = pcall(function()
+        if type(gethui) == "function" then
+            return gethui()
+        end
+        return CoreGui
+    end)
+    ParentGui = Success and Result or nil
+    if not ParentGui then
+        ParentGui = Player:WaitForChild("PlayerGui")
+    end
+
+    local Old = ParentGui:FindFirstChild("ZeroPointLiteUI")
+    if Old then
+        Old:Destroy()
+    end
+    local Screen = make("ScreenGui", {
+        Name = "ZeroPointLiteUI",
+        ResetOnSpawn = false,
+        IgnoreGuiInset = true,
+        DisplayOrder = 50,
+        ZIndexBehavior = Enum.ZIndexBehavior.Sibling
+    }, nil)
+    local ParentOk = pcall(function()
+        Screen.Parent = ParentGui
+    end)
+    if not ParentOk then
+        Screen.Parent = Player:WaitForChild("PlayerGui")
+    end
+    Window.ScreenGui = Screen
+
+    local Main = make("Frame", {
+        Name = "Main",
+        BorderSizePixel = 0,
+        Size = UDim2.fromOffset(Width, Height),
+        Position = UDim2.new(0.5, -Width / 2, 0.5, -Height / 2),
+        ClipsDescendants = true
+    }, Screen)
+    paint(Main, "BackgroundColor3", "Shell")
+    rounded(Main, 10)
+
+    local Header = make("Frame", {
+        BackgroundTransparency = 1,
+        Size = UDim2.new(1, 0, 0, 55)
+    }, Main)
+    local Title = label(Header, Info.Title or "Zero Point Lite", 15, "Text", 19, true)
+    Title.Position = UDim2.fromOffset(14, 10)
+    Title.Size = UDim2.new(1, -95, 0, 20)
+    local Subtitle = label(Header, Info.Subtitle or "ZERO POINT / LITE", 9, "Muted", 16, true)
+    Subtitle.Position = UDim2.fromOffset(14, 29)
+    Subtitle.Size = UDim2.new(1, -95, 0, 16)
+
+    local function HeaderButton(Text, X)
+        local Button = make("TextButton", {
+            Text = Text,
+            Font = Enum.Font.GothamMedium,
+            TextSize = 13,
+            AutoButtonColor = false,
+            BorderSizePixel = 0,
+            Size = UDim2.fromOffset(26, 26),
+            Position = UDim2.new(1, X, 0, 13)
+        }, Header)
+        paint(Button, "BackgroundColor3", "Surface")
+        paint(Button, "TextColor3", "Text")
+        rounded(Button, 8)
+        return Button
+    end
+    local Minimize = HeaderButton("−", -58)
+    local Close = HeaderButton("×", -29)
+
+    local TabsBar = make("Frame", {
+        BackgroundTransparency = 1,
+        Size = UDim2.new(1, -20, 0, 31),
+        Position = UDim2.fromOffset(10, 53),
+        Visible = false
+    }, Main)
+    stack(TabsBar, 5, Enum.FillDirection.Horizontal)
+
+    local Pages = make("Frame", {
+        BackgroundTransparency = 1,
+        Position = UDim2.fromOffset(10, 58),
+        Size = UDim2.new(1, -20, 1, -66)
+    }, Main)
+
+    local function layoutTabs()
+        local HasMultiple = #Window.Tabs > 1
+        TabsBar.Visible = HasMultiple
+        Pages.Position = UDim2.fromOffset(10, HasMultiple and 91 or 59)
+        Pages.Size = UDim2.new(1, -20, 1, HasMultiple and -99 or -67)
+        for _, Tab in ipairs(Window.Tabs) do
+            Tab.Button.Size = UDim2.new(1 / #Window.Tabs, -5, 1, 0)
+        end
+    end
+
+    local function changeTab(Tab)
+        for _, Other in ipairs(Window.Tabs) do
+            local Active = Other == Tab
+            Other.Page.Visible = Active
+            Other.Active = Active
+            Other.Button.BackgroundColor3 = Active and Library.Theme.Accent or Library.Theme.Surface
+            Other.Button.TextColor3 = Active and Library.Theme.Shell or Library.Theme.Muted
+        end
+    end
+    table.insert(Library.Refreshers, function()
+        for _, Tab in ipairs(Window.Tabs) do
+            if Tab.Button.Parent then
+                Tab.Button.BackgroundColor3 = Tab.Active and Library.Theme.Accent or Library.Theme.Surface
+                Tab.Button.TextColor3 = Tab.Active and Library.Theme.Shell or Library.Theme.Muted
+            end
+        end
+    end)
+
+    function Window:AddTab(TabInfo)
+        TabInfo = type(TabInfo) == "string" and { Name = TabInfo } or (TabInfo or {})
+        local Name = TabInfo.Name or "Main"
+        local Tab = { Name = Name, Groups = {}, Active = false }
+        local Button = make("TextButton", {
+            Text = Name,
+            Font = Enum.Font.GothamMedium,
+            TextSize = 11,
+            AutoButtonColor = false,
+            BorderSizePixel = 0,
+            LayoutOrder = #Window.Tabs + 1
+        }, TabsBar)
+        rounded(Button, 6)
+        Tab.Button = Button
+        local Page = make("ScrollingFrame", {
+            BackgroundTransparency = 1,
+            BorderSizePixel = 0,
+            Size = UDim2.fromScale(1, 1),
+            CanvasSize = UDim2.fromOffset(0, 0),
+            ScrollBarThickness = 2,
+            ScrollingDirection = Enum.ScrollingDirection.Y,
+            Visible = false,
+            AutomaticCanvasSize = Enum.AutomaticSize.None
+        }, Pages)
+        paint(Page, "ScrollBarImageColor3", "Accent")
+        pad(Page, 0, 3, 1, 10)
+        local PageLayout = stack(Page, 12)
+        hook(PageLayout:GetPropertyChangedSignal("AbsoluteContentSize"):Connect(function()
+            Page.CanvasSize = UDim2.fromOffset(0, PageLayout.AbsoluteContentSize.Y + 14)
+        end))
+        Tab.Page = Page
+        hook(Button.MouseButton1Click:Connect(function()
+            changeTab(Tab)
+        end))
+        table.insert(Window.Tabs, Tab)
+        layoutTabs()
+        if #Window.Tabs == 1 then
+            changeTab(Tab)
+        end
+
+        function Tab:AddGroupbox(Name)
+            if type(Name) == "table" then
+                Name = Name.Name
+            end
+            local Group = { Tab = Tab, Controls = {} }
+            local Holder = make("Frame", {
+                BackgroundTransparency = 1,
+                AutomaticSize = Enum.AutomaticSize.Y,
+                Size = UDim2.new(1, 0, 0, 0),
+                LayoutOrder = #Tab.Groups + 1
+            }, Page)
+            stack(Holder, 6)
+            local Heading = label(Holder, string.upper(tostring(Name or "SECTION")), 9, "Label", 16, true)
+            Heading.LayoutOrder = 1
+            local Rows = make("Frame", {
+                BackgroundTransparency = 1,
+                AutomaticSize = Enum.AutomaticSize.Y,
+                Size = UDim2.new(1, 0, 0, 0),
+                LayoutOrder = 2
+            }, Holder)
+            stack(Rows, 6)
+            Group.Holder = Holder
+            Group.Rows = Rows
+
+            local function row(Height)
+                local R = make("Frame", {
+                    BorderSizePixel = 0,
+                    Size = UDim2.new(1, 0, 0, Height),
+                    LayoutOrder = #Group.Controls + 1
+                }, Rows)
+                paint(R, "BackgroundColor3", "Surface")
+                rounded(R, 7)
+                table.insert(Group.Controls, R)
+                return R
+            end
+
+            function Group:AddLabel(Text)
+                local Content = type(Text) == "table" and Text.Text or Text
+                local Frame = make("Frame", {
+                    BackgroundTransparency = 1,
+                    Size = UDim2.new(1, 0, 0, 28),
+                    LayoutOrder = #Group.Controls + 1
+                }, Rows)
+                local L = label(Frame, Content, 10, "Muted", 28)
+                L.TextWrapped = true
+                table.insert(Group.Controls, Frame)
+                return { Holder = Frame, SetText = function(_, Value) L.Text = tostring(Value) end }
+            end
+
+            function Group:AddParagraph(Info)
+                Info = type(Info) == "string" and { Title = Info } or (Info or {})
+                local R = row(70)
+                local NameLabel = label(R, Info.Title or "Information", 11, "Text", 18, true)
+                NameLabel.Position = UDim2.fromOffset(10, 7)
+                NameLabel.Size = UDim2.new(1, -20, 0, 18)
+                local Body = label(R, Info.Content or "", 10, Info.Color or "Gold", 34)
+                Body.Position = UDim2.fromOffset(10, 23)
+                Body.Size = UDim2.new(1, -20, 0, 37)
+                Body.TextYAlignment = Enum.TextYAlignment.Top
+                return {
+                    Holder = R,
+                    SetContent = function(_, Content) Body.Text = tostring(Content) end,
+                    SetTitle = function(_, Value) NameLabel.Text = tostring(Value) end
+                }
+            end
+
+            function Group:AddToggle(Id, Info)
+                Info = Info or {}
+                local R = row(32)
+                local TextLabel = label(R, Info.Text or tostring(Id), 11, "Text", 32)
+                TextLabel.Position = UDim2.fromOffset(10, 0)
+                TextLabel.Size = UDim2.new(1, -68, 1, 0)
+                local Hitbox = make("TextButton", {
+                    BackgroundTransparency = 1,
+                    Text = "",
+                    Size = UDim2.fromScale(1, 1),
+                    ZIndex = 3,
+                    AutoButtonColor = false
+                }, R)
+                local Track = make("Frame", {
+                    BorderSizePixel = 0,
+                    Size = UDim2.fromOffset(34, 17),
+                    Position = UDim2.new(1, -44, 0.5, -8)
+                }, R)
+                rounded(Track, 12)
+                local Knob = make("Frame", {
+                    BackgroundColor3 = Color3.fromRGB(246, 242, 255),
+                    BorderSizePixel = 0,
+                    Size = UDim2.fromOffset(13, 13),
+                    Position = UDim2.fromOffset(2, 2)
+                }, Track)
+                rounded(Knob, 12)
+                local Toggle = { Value = false, Holder = R, Type = "Toggle" }
+                function Toggle:SetValue(Value, Silent)
+                    self.Value = Value == true
+                    Track.BackgroundColor3 = self.Value and Library.Theme.Accent or Library.Theme.Track
+                    TweenService:Create(Knob, TweenInfo.new(0.14, Enum.EasingStyle.Quad), {
+                        Position = UDim2.fromOffset(self.Value and 19 or 2, 2)
+                    }):Play()
+                    if not Silent then
+                        safeCall(Info.Callback, self.Value)
+                    end
+                end
+                table.insert(Library.Refreshers, function()
+                    if Track.Parent then
+                        Track.BackgroundColor3 = Toggle.Value and Library.Theme.Accent or Library.Theme.Track
+                    end
+                end)
+                hook(Hitbox.MouseButton1Click:Connect(function()
+                    Toggle:SetValue(not Toggle.Value)
+                end))
+                Toggle:SetValue(Info.Default == true, true)
+                Library.Toggles[Id] = Toggle
+                return Toggle
+            end
+
+            function Group:AddSlider(Id, Info)
+                Info = Info or {}
+                local Minimum = tonumber(Info.Min) or 0
+                local Maximum = math.max(Minimum + 1, tonumber(Info.Max) or 100)
+                local Digits = math.clamp(tonumber(Info.Rounding) or 0, 0, 4)
+                local Step = 10 ^ Digits
+                local R = row(50)
+                local TextLabel = label(R, "", 11, "Text", 19)
+                TextLabel.Position = UDim2.fromOffset(10, 4)
+                TextLabel.Size = UDim2.new(1, -20, 0, 19)
+                local Track = make("Frame", {
+                    BorderSizePixel = 0,
+                    Position = UDim2.fromOffset(10, 28),
+                    Size = UDim2.new(1, -20, 0, 5),
+                    Active = true
+                }, R)
+                paint(Track, "BackgroundColor3", "Track")
+                rounded(Track, 3)
+                local Fill = make("Frame", {
+                    BorderSizePixel = 0,
+                    Size = UDim2.fromScale(0, 1)
+                }, Track)
+                paint(Fill, "BackgroundColor3", "Accent")
+                rounded(Fill, 3)
+                local Slider = { Value = Minimum, Holder = R, Type = "Slider" }
+                function Slider:SetValue(Number, Silent)
+                    local N = math.clamp(tonumber(Number) or Minimum, Minimum, Maximum)
+                    self.Value = math.floor(N * Step + 0.5) / Step
+                    TextLabel.Text = (Info.Text or tostring(Id)) .. ": " .. tostring(self.Value) .. (Info.Suffix or "")
+                    Fill.Size = UDim2.new((self.Value - Minimum) / (Maximum - Minimum), 0, 1, 0)
+                    if not Silent then
+                        safeCall(Info.Callback, self.Value)
+                    end
+                end
+                local Dragging = false
+                local DragObject
+                local function fromX(X)
+                    if Track.AbsoluteSize.X <= 0 then return end
+                    local Alpha = math.clamp((X - Track.AbsolutePosition.X) / Track.AbsoluteSize.X, 0, 1)
+                    Slider:SetValue(Minimum + Alpha * (Maximum - Minimum))
+                end
+                hook(Track.InputBegan:Connect(function(Input)
+                    if Input.UserInputType == Enum.UserInputType.MouseButton1 or Input.UserInputType == Enum.UserInputType.Touch then
+                        Dragging = true
+                        DragObject = Input
+                        fromX(Input.Position.X)
+                    end
+                end))
+                hook(UserInputService.InputChanged:Connect(function(Input)
+                    if Dragging and (Input == DragObject or (DragObject and DragObject.UserInputType == Enum.UserInputType.MouseButton1 and Input.UserInputType == Enum.UserInputType.MouseMovement)) then
+                        fromX(Input.Position.X)
+                    end
+                end))
+                hook(UserInputService.InputEnded:Connect(function(Input)
+                    if Input == DragObject or (DragObject and DragObject.UserInputType == Enum.UserInputType.MouseButton1 and Input.UserInputType == Enum.UserInputType.MouseButton1) then
+                        Dragging = false
+                        DragObject = nil
+                    end
+                end))
+                Slider:SetValue(Info.Default == nil and Minimum or Info.Default, true)
+                Library.Options[Id] = Slider
+                return Slider
+            end
+
+            function Group:AddButton(TextOrInfo, Callback)
+                local Info = type(TextOrInfo) == "table" and TextOrInfo or { Text = TextOrInfo, Callback = Callback }
+                local R = row(32)
+                local Button = make("TextButton", {
+                    BackgroundTransparency = 1,
+                    Size = UDim2.fromScale(1, 1),
+                    Text = Info.Text or "Button",
+                    Font = Enum.Font.GothamMedium,
+                    TextSize = 11,
+                    AutoButtonColor = false
+                }, R)
+                paint(Button, "TextColor3", "Text")
+                hook(Button.MouseButton1Click:Connect(function()
+                    safeCall(Info.Callback)
+                end))
+                return { Holder = R }
+            end
+
+            function Group:AddDropdown(Id, Info)
+                Info = Info or {}
+                local Values = Info.Values or {}
+                local Host = make("Frame", {
+                    BackgroundTransparency = 1,
+                    AutomaticSize = Enum.AutomaticSize.Y,
+                    Size = UDim2.new(1, 0, 0, 0),
+                    LayoutOrder = #Group.Controls + 1
+                }, Rows)
+                stack(Host, 5)
+                table.insert(Group.Controls, Host)
+                local Head = make("TextButton", {
+                    BorderSizePixel = 0,
+                    Text = "",
+                    Size = UDim2.new(1, 0, 0, 38),
+                    AutoButtonColor = false
+                }, Host)
+                paint(Head, "BackgroundColor3", "Surface")
+                rounded(Head, 7)
+                local HeadText = label(Head, "", 11, "Text", 38)
+                HeadText.Position = UDim2.fromOffset(10, 0)
+                HeadText.Size = UDim2.new(1, -32, 1, 0)
+                local Arrow = label(Head, "⌄", 15, "Muted", 38)
+                Arrow.Position = UDim2.new(1, -23, 0, 0)
+                Arrow.Size = UDim2.fromOffset(20, 38)
+                local List = make("Frame", {
+                    BackgroundTransparency = 1,
+                    AutomaticSize = Enum.AutomaticSize.Y,
+                    Size = UDim2.new(1, 0, 0, 0),
+                    Visible = false
+                }, Host)
+                stack(List, 4)
+                local Drop = { Value = nil, Holder = Host, Type = "Dropdown" }
+                function Drop:SetValue(Value, Silent)
+                    if not table.find(Values, Value) then return end
+                    self.Value = Value
+                    HeadText.Text = (Info.Text or tostring(Id)) .. ": " .. tostring(Value)
+                    if not Silent then safeCall(Info.Callback, Value) end
+                    List.Visible = false
+                end
+                for _, Value in ipairs(Values) do
+                    local Entry = make("TextButton", {
+                        Text = tostring(Value),
+                        Font = Enum.Font.Gotham,
+                        TextSize = 11,
+                        BorderSizePixel = 0,
+                        Size = UDim2.new(1, 0, 0, 28),
+                        AutoButtonColor = false
+                    }, List)
+                    paint(Entry, "BackgroundColor3", "Raised")
+                    paint(Entry, "TextColor3", "Text")
+                    rounded(Entry, 6)
+                    hook(Entry.MouseButton1Click:Connect(function()
+                        Drop:SetValue(Value)
+                    end))
+                end
+                hook(Head.MouseButton1Click:Connect(function()
+                    List.Visible = not List.Visible
+                    Arrow.Text = List.Visible and "⌃" or "⌄"
+                end))
+                if #Values > 0 then
+                    Drop:SetValue(Info.Default and table.find(Values, Info.Default) and Info.Default or Values[1], true)
+                else
+                    HeadText.Text = Info.Text or tostring(Id)
+                end
+                Library.Options[Id] = Drop
+                return Drop
+            end
+
+            function Group:AddChoice(Id, Info)
+                Info = Info or {}
+                local Values = Info.Values or {}
+                local Columns = math.max(1, Info.Columns or 3)
+                local LineCount = math.ceil(#Values / Columns)
+                local Host = make("Frame", {
+                    BackgroundTransparency = 1,
+                    Size = UDim2.new(1, 0, 0, math.max(0, LineCount * 34 - 6)),
+                    LayoutOrder = #Group.Controls + 1
+                }, Rows)
+                table.insert(Group.Controls, Host)
+                local Grid = make("UIGridLayout", {
+                    SortOrder = Enum.SortOrder.LayoutOrder,
+                    CellPadding = UDim2.fromOffset(6, 6),
+                    CellSize = UDim2.new(1 / Columns, -6, 0, 28)
+                }, Host)
+                local Choice = { Value = nil, Holder = Host, Type = "Choice", Buttons = {} }
+                function Choice:SetValue(Value, Silent)
+                    if not table.find(Values, Value) then return end
+                    self.Value = Value
+                    for _, E in ipairs(self.Buttons) do
+                        E.Button.BackgroundColor3 = E.Value == Value and Library.Theme.Accent or Library.Theme.Surface
+                        E.Button.TextColor3 = E.Value == Value and Library.Theme.Shell or Library.Theme.Text
+                    end
+                    if not Silent then safeCall(Info.Callback, Value) end
+                end
+                for Index, Value in ipairs(Values) do
+                    local Button = make("TextButton", {
+                        Text = tostring(Value),
+                        Font = Enum.Font.GothamMedium,
+                        TextSize = 10,
+                        LayoutOrder = Index,
+                        BorderSizePixel = 0,
+                        AutoButtonColor = false
+                    }, Host)
+                    rounded(Button, 7)
+                    table.insert(Choice.Buttons, { Value = Value, Button = Button })
+                    hook(Button.MouseButton1Click:Connect(function() Choice:SetValue(Value) end))
+                end
+                table.insert(Library.Refreshers, function()
+                    if Host.Parent and Choice.Value then
+                        Choice:SetValue(Choice.Value, true)
+                    end
+                end)
+                if #Values > 0 then
+                    Choice:SetValue(Info.Default and table.find(Values, Info.Default) and Info.Default or Values[1], true)
+                end
+                Library.Options[Id] = Choice
+                return Choice
+            end
+
+            function Group:AddInput(Id, Info)
+                Info = Info or {}
+                local R = row(55)
+                local Heading = label(R, Info.Text or tostring(Id), 10, "Muted", 18)
+                Heading.Position = UDim2.fromOffset(10, 3)
+                Heading.Size = UDim2.new(1, -20, 0, 18)
+                local Box = make("TextBox", {
+                    Text = tostring(Info.Default or ""),
+                    PlaceholderText = Info.Placeholder or "Enter value...",
+                    Font = Enum.Font.Gotham,
+                    TextSize = 11,
+                    TextXAlignment = Enum.TextXAlignment.Left,
+                    ClearTextOnFocus = false,
+                    BorderSizePixel = 0,
+                    Size = UDim2.new(1, -20, 0, 27),
+                    Position = UDim2.fromOffset(10, 23)
+                }, R)
+                paint(Box, "BackgroundColor3", "Raised")
+                paint(Box, "TextColor3", "Text")
+                paint(Box, "PlaceholderColor3", "Muted")
+                rounded(Box, 6)
+                pad(Box, 8, 6, 0, 0)
+                local Input = { Value = Box.Text, Holder = R, Type = "Input" }
+                function Input:SetValue(Value, Silent)
+                    self.Value = tostring(Value)
+                    Box.Text = self.Value
+                    if not Silent then safeCall(Info.Callback, self.Value) end
+                end
+                hook(Box.FocusLost:Connect(function()
+                    if Info.Numeric and tonumber(Box.Text) == nil then
+                        Box.Text = Input.Value
+                    else
+                        Input:SetValue(Box.Text)
+                    end
+                end))
+                Library.Options[Id] = Input
+                return Input
+            end
+
+            table.insert(Tab.Groups, Group)
+            return Group
+        end
+        Tab.AddLeftGroupbox = Tab.AddGroupbox
+        Tab.AddRightGroupbox = Tab.AddGroupbox
+        return Tab
+    end
+
+    function Window:SetVisible(Value)
+        self.Visible = Value == true
+        Main.Visible = self.Visible
+    end
+    function Window:SetMinimized(Value)
+        self.Minimized = Value == true
+        Pages.Visible = not self.Minimized
+        TabsBar.Visible = not self.Minimized and #self.Tabs > 1
+        Main.Size = UDim2.fromOffset(Width, self.Minimized and 55 or Height)
+        Minimize.Text = self.Minimized and "+" or "−"
+    end
+    function Window:Unload()
+        Library:Unload()
+    end
+
+    hook(Minimize.MouseButton1Click:Connect(function()
+        Window:SetMinimized(not Window.Minimized)
+    end))
+    hook(Close.MouseButton1Click:Connect(function()
+        Window:SetVisible(false)
+    end))
+    hook(UserInputService.InputBegan:Connect(function(Input, Processed)
+        if Processed or UserInputService:GetFocusedTextBox() then return end
+        if Input.KeyCode == Enum.KeyCode.RightControl then
+            Window:SetVisible(not Window.Visible)
+        end
+    end))
+
+    local Moving = false
+    local StartingInput
+    local StartingPosition
+    hook(Header.InputBegan:Connect(function(Input)
+        if Input.UserInputType == Enum.UserInputType.MouseButton1 or Input.UserInputType == Enum.UserInputType.Touch then
+            Moving = true
+            StartingInput = Input.Position
+            StartingPosition = Main.Position
+        end
+    end))
+    hook(UserInputService.InputChanged:Connect(function(Input)
+        if not Moving then return end
+        if Input.UserInputType ~= Enum.UserInputType.MouseMovement and Input.UserInputType ~= Enum.UserInputType.Touch then return end
+        local Delta = Input.Position - StartingInput
+        Main.Position = UDim2.new(StartingPosition.X.Scale, StartingPosition.X.Offset + Delta.X, StartingPosition.Y.Scale, StartingPosition.Y.Offset + Delta.Y)
+    end))
+    hook(UserInputService.InputEnded:Connect(function(Input)
+        if Input.UserInputType == Enum.UserInputType.MouseButton1 or Input.UserInputType == Enum.UserInputType.Touch then
+            Moving = false
+        end
+    end))
+
+    if UserInputService.TouchEnabled then
+        local Bubble = make("TextButton", {
+            Name = "OpenMenu",
+            Text = "Z",
+            Font = Enum.Font.GothamBold,
+            TextSize = 16,
+            BorderSizePixel = 0,
+            AutoButtonColor = false,
+            Position = UDim2.new(0, 12, 0.52, 0),
+            Size = UDim2.fromOffset(38, 38),
+            Visible = false
+        }, Screen)
+        paint(Bubble, "BackgroundColor3", "Accent")
+        paint(Bubble, "TextColor3", "Shell")
+        rounded(Bubble, 19)
+        local OldSetVisible = Window.SetVisible
+        function Window:SetVisible(Value)
+            OldSetVisible(self, Value)
+            Bubble.Visible = not self.Visible
+        end
+        hook(Bubble.MouseButton1Click:Connect(function()
+            Window:SetVisible(true)
+        end))
+    end
+
+    table.insert(self.Windows, Window)
+    return Window
+end
+
+Environment.ZeroPointLite = Library
+return Library
