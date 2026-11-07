@@ -3145,20 +3145,45 @@ function Library:MakeResizable(UI: GuiObject, DragFrame: GuiObject, Callback: ()
     local Changed
     local DidResize = false
     local LastApplied = 0
-    local ResizeInterval = Library.IsMobile and 1 / 18 or 1 / 24
+    local ResizeInterval = Library.IsMobile and 1 / 30 or 1 / 45
+    local Preview = Instance.new("Frame")
+    Preview.Name = "ZeroPointResizePreview"
+    Preview.BackgroundTransparency = 1
+    Preview.BorderSizePixel = 0
+    Preview.Active = false
+    Preview.Selectable = false
+    Preview.ZIndex = 9500
+    Preview.Visible = false
+    Preview.Parent = UI.Parent
+    local PreviewScale = Instance.new("UIScale")
+    PreviewScale.Parent = Preview
+    local PreviewCorner = Instance.new("UICorner")
+    PreviewCorner.CornerRadius = UDim.new(0, Library.CornerRadius)
+    PreviewCorner.Parent = Preview
+    local PreviewStroke = Instance.new("UIStroke")
+    PreviewStroke.Color = Library.Scheme.AccentColor
+    PreviewStroke.Thickness = 2
+    PreviewStroke.Transparency = 0.1
+    PreviewStroke.Parent = Preview
 
-    local function ApplyPendingResize()
-        if not PendingPosition or not UI.Parent then return end
-        local Delta = PendingPosition - StartPos
-        local NewSize = UDim2.new(
-            FrameSize.X.Scale,
-            math.floor(math.clamp(FrameSize.X.Offset + Delta.X, Library.MinSize.X, math.huge) + 0.5),
-            FrameSize.Y.Scale,
-            math.floor(math.clamp(FrameSize.Y.Offset + Delta.Y, Library.MinSize.Y, math.huge) + 0.5)
-        )
-        if UI.Size ~= NewSize then
-            UI.Size = NewSize
-            DidResize = true
+    local function GetScale()
+        local MainScale = UI:FindFirstChildOfClass("UIScale")
+        return math.max(MainScale and MainScale.Scale or 1, 0.05)
+    end
+
+    local function CalculateSize(Position)
+        if not Position or not StartPos or not FrameSize then return nil end
+        local Delta = (Position - StartPos) / GetScale()
+        local Width = math.floor(math.max(Library.MinSize.X, FrameSize.X.Offset + Delta.X) + 0.5)
+        local Height = math.floor(math.max(Library.MinSize.Y, FrameSize.Y.Offset + Delta.Y) + 0.5)
+        return UDim2.new(FrameSize.X.Scale, Width, FrameSize.Y.Scale, Height)
+    end
+
+    local function UpdatePreview()
+        if not PendingPosition or not Preview.Parent then return end
+        local NewSize = CalculateSize(PendingPosition)
+        if NewSize and Preview.Size ~= NewSize then
+            Preview.Size = NewSize
         end
     end
 
@@ -3177,18 +3202,26 @@ function Library:MakeResizable(UI: GuiObject, DragFrame: GuiObject, Callback: ()
         end)
     end
 
-    local function FinishResize()
+    local function FinishResize(FinalPosition)
         if not Dragging then return end
-        ApplyPendingResize()
+        if FinalPosition then
+            PendingPosition = FinalPosition
+        end
+        local TargetSize = CalculateSize(PendingPosition)
         Dragging = false
         DragInput = nil
         PendingPosition = nil
-        Library.ResizeInteractionActive = false
-        Library.GuiInteractionActive = false
+        Preview.Visible = false
         if Changed then
             Changed:Disconnect()
             Changed = nil
         end
+        if TargetSize and UI.Parent and UI.Size ~= TargetSize then
+            UI.Size = TargetSize
+            DidResize = true
+        end
+        Library.ResizeInteractionActive = false
+        Library.GuiInteractionActive = false
         if DidResize and Callback then
             task.defer(function()
                 if not Library.Unloaded and UI.Parent then
@@ -3202,7 +3235,7 @@ function Library:MakeResizable(UI: GuiObject, DragFrame: GuiObject, Callback: ()
     end
 
     Library:GiveSignal(DragFrame.InputBegan:Connect(function(Input: InputObject)
-        if not IsClickInput(Input) or Dragging then return end
+        if not IsClickInput(Input) or Dragging or not UI.Parent then return end
         StartPos = Input.Position
         FrameSize = UI.Size
         PendingPosition = StartPos
@@ -3212,16 +3245,24 @@ function Library:MakeResizable(UI: GuiObject, DragFrame: GuiObject, Callback: ()
         Dragging = true
         Library.ResizeInteractionActive = true
         Library.GuiInteractionActive = true
+        Preview.AnchorPoint = UI.AnchorPoint
+        Preview.Position = UI.Position
+        Preview.Size = UI.Size
+        PreviewScale.Scale = GetScale()
+        PreviewCorner.CornerRadius = UDim.new(0, Library.CornerRadius)
+        PreviewStroke.Color = Library.Scheme.AccentColor
+        Preview.Parent = UI.Parent
+        Preview.Visible = true
         Changed = Input.Changed:Connect(function()
             if Input.UserInputState == Enum.UserInputState.End or Input.UserInputState == Enum.UserInputState.Cancel then
-                FinishResize()
+                FinishResize(Input.Position)
             end
         end)
     end))
 
     Library:GiveSignal(UserInputService.InputChanged:Connect(function(Input: InputObject)
         if not Dragging then return end
-        if not UI.Visible or not (ScreenGui and ScreenGui.Parent) then
+        if not UI.Visible or not UI.Parent or not (ScreenGui and ScreenGui.Parent) then
             FinishResize()
             return
         end
@@ -3234,8 +3275,7 @@ function Library:MakeResizable(UI: GuiObject, DragFrame: GuiObject, Callback: ()
         local Now = os.clock()
         if Now - LastApplied >= ResizeInterval then
             LastApplied = Now
-            ApplyPendingResize()
-            PendingPosition = nil
+            UpdatePreview()
         end
     end))
 
@@ -3243,7 +3283,7 @@ function Library:MakeResizable(UI: GuiObject, DragFrame: GuiObject, Callback: ()
         if not Dragging then return end
         if Input == DragInput or (DragInput and DragInput.UserInputType == Enum.UserInputType.MouseButton1
             and Input.UserInputType == Enum.UserInputType.MouseButton1) then
-            FinishResize()
+            FinishResize(Input.Position)
         end
     end))
 end
