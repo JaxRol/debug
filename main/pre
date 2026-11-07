@@ -2872,32 +2872,67 @@ function Library:MakeDraggable(
     local LastApplied = 0
     local DragInterval = Library.IsMobile and 1 / 24 or 1 / 35
     local DragController = {}
+    local Preview
+    local PreviewScale
+    local PreviewCorner
+    local PreviewStroke
+
+    if IsMainWindow then
+        Preview = Instance.new("Frame")
+        Preview.Name = "ZeroPointMovePreview"
+        Preview.BackgroundTransparency = 1
+        Preview.BorderSizePixel = 0
+        Preview.Active = false
+        Preview.Selectable = false
+        Preview.ZIndex = 9500
+        Preview.Visible = false
+        Preview.Parent = UI.Parent
+
+        PreviewScale = Instance.new("UIScale")
+        PreviewScale.Parent = Preview
+
+        PreviewCorner = Instance.new("UICorner")
+        PreviewCorner.CornerRadius = UDim.new(0, Library.CornerRadius)
+        PreviewCorner.Parent = Preview
+
+        PreviewStroke = Instance.new("UIStroke")
+        PreviewStroke.Color = Library.Scheme.AccentColor
+        PreviewStroke.Thickness = 2
+        PreviewStroke.Transparency = 0.1
+        PreviewStroke.Parent = Preview
+    end
 
     local function DraggingAllowed(): boolean
         return not CanDrag or CanDrag()
     end
 
-    local function UpdatePosition(Position)
-        if not Position or not StartPos or not FramePos or not UI.Parent then return end
+    local function CalculatePosition(Position)
+        if not Position or not StartPos or not FramePos or not UI.Parent then return nil end
         local Delta = Position - StartPos
         DragDistance = Delta.Magnitude
-        local NextPosition = UDim2.new(
+        return UDim2.new(
             FramePos.X.Scale,
             math.floor(FramePos.X.Offset + Delta.X + 0.5),
             FramePos.Y.Scale,
             math.floor(FramePos.Y.Offset + Delta.Y + 0.5)
         )
-        if UI.Position ~= NextPosition then
-            UI.Position = NextPosition
-        end
     end
 
-    local function FinishDrag()
+    local function FinishDrag(FinalPosition)
         if not Dragging then return end
-        if PendingPosition then UpdatePosition(PendingPosition) end
+        if FinalPosition then
+            PendingPosition = FinalPosition
+        end
+        local TargetPosition = CalculatePosition(PendingPosition)
         PendingPosition = nil
         Dragging = false
         DragInput = nil
+        if Preview then
+            Preview.Visible = false
+        end
+        if TargetPosition and UI.Parent and UI.Position ~= TargetPosition then
+            UI.Position = TargetPosition
+        end
         if IsMainWindow then
             Library.GuiInteractionActive = false
         end
@@ -2920,15 +2955,26 @@ function Library:MakeDraggable(
         FramePos = UI.Position
         DragInput = Input
         DragDistance = 0
-        PendingPosition = nil
+        PendingPosition = StartPos
         LastApplied = 0
         Dragging = true
         if IsMainWindow then
             Library.GuiInteractionActive = true
         end
+        if Preview then
+            Preview.AnchorPoint = UI.AnchorPoint
+            Preview.Position = UI.Position
+            Preview.Size = UI.Size
+            local WindowScale = UI:FindFirstChildOfClass("UIScale")
+            PreviewScale.Scale = math.max(WindowScale and WindowScale.Scale or 1, 0.05)
+            PreviewCorner.CornerRadius = UDim.new(0, Library.CornerRadius)
+            PreviewStroke.Color = Library.Scheme.AccentColor
+            Preview.Parent = UI.Parent
+            Preview.Visible = true
+        end
         Changed = Input.Changed:Connect(function()
             if Input.UserInputState == Enum.UserInputState.End or Input.UserInputState == Enum.UserInputState.Cancel then
-                FinishDrag()
+                FinishDrag(Input.UserInputType == Enum.UserInputType.Touch and Input.Position or nil)
             end
         end)
     end))
@@ -2953,8 +2999,11 @@ function Library:MakeDraggable(
         local Now = os.clock()
         if Now - LastApplied >= DragInterval then
             LastApplied = Now
-            UpdatePosition(PendingPosition)
-            PendingPosition = nil
+            local TargetPosition = CalculatePosition(PendingPosition)
+            local Target = Preview or UI
+            if TargetPosition and Target.Position ~= TargetPosition then
+                Target.Position = TargetPosition
+            end
         end
     end))
 
@@ -2962,7 +3011,7 @@ function Library:MakeDraggable(
         if not Dragging then return end
         if Input == DragInput or (DragInput and DragInput.UserInputType == Enum.UserInputType.MouseButton1
             and Input.UserInputType == Enum.UserInputType.MouseButton1) then
-            FinishDrag()
+            FinishDrag(Input.UserInputType == Enum.UserInputType.Touch and Input.Position or nil)
         end
     end))
 
